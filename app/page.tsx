@@ -352,8 +352,7 @@ mapped.sort((a, b) => {
     const workoutType = detectWorkoutTypeFromWodText(wodText);
 
   return (
-    <main className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-8 px-6 py-12 lg:px-10">
-      <div className="absolute right-6 top-6 flex items-center gap-3">
+<main className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-8 px-6 py-12 pb-24 lg:px-10">      <div className="absolute right-6 top-6 flex items-center gap-3">
         <div className="h-10 w-10 rounded-full border border-white/10 bg-white/10" />
         <div className="text-sm font-medium text-slate-200">
           {displayName ?? fallbackName}
@@ -368,6 +367,23 @@ mapped.sort((a, b) => {
         <div className="text-sm text-slate-300">Workout type detected:</div>
         <div className="mt-1 text-lg font-semibold">{workoutType}</div>
       </div>
-    </main>
+        {/* Bottom Navigation */}
+    <div className="fixed bottom-0 left-0 right-0 border-t border-white/10 bg-black/80 backdrop-blur">
+      <div className="mx-auto flex max-w-6xl items-center justify-around px-6 py-3">
+        <a
+          href="/"
+          className="text-sm font-semibold text-white"
+        >
+          Daily
+        </a>
+        <a
+          href="/monthly"
+          className="text-sm font-medium text-slate-300"
+        >
+          Monthly
+        </a>
+      </div>
+    </div>
+  </main>
   );
 }
