@@ -19,6 +19,11 @@ type TodaysWod = {
   blocks: WodBlock[];
 };
 
+type Member = {
+  id: string;
+  display_name: string | null;
+};
+
 const todaysWod: TodaysWod = {
   day: 'Today',
   focus: 'Post the WOD here (exact text as posted).',
@@ -49,58 +54,82 @@ function SectionCard({ block }: { block: WodBlock }) {
 }
 
 export default function HomePage() {
+  const [meId, setMeId] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState<string | null>(null);
   const [avatarPath, setAvatarPath] = useState<string | null>(null);
   const [email, setEmail] = useState<string | null>(null);
 
+  const [members, setMembers] = useState<Member[]>([]);
+  const [selectedAthleteId, setSelectedAthleteId] = useState<string | null>(null);
+
   const [score, setScore] = useState('');
   const [scores, setScores] = useState<string[]>([]);
 
-  // NEW: who the score is being submitted for (UI only for now)
-  const [submitFor, setSubmitFor] = useState<'me' | 'someone_else'>('me');
-
   useEffect(() => {
-    async function loadMe() {
+    async function loadMeAndMembers() {
       const { data } = await supabase.auth.getUser();
       const user = data.user;
-      console.log('USER:', user);
 
       if (!user) return;
 
+      setMeId(user.id);
+      setSelectedAthleteId(user.id); // default = me
       setEmail(user.email ?? null);
 
-      const { data: profile, error } = await supabase
+      // Load my profile header display name
+      const { data: profile } = await supabase
         .from('profiles')
         .select('display_name, avatar_path')
         .eq('id', user.id)
         .single();
 
-      if (!error && profile) {
+      if (profile) {
         setDisplayName(profile.display_name ?? null);
         setAvatarPath(profile.avatar_path ?? null);
       }
+
+      // Load all gym members (for submit-on-behalf)
+      const { data: allMembers, error: membersError } = await supabase
+        .from('profiles')
+        .select('id, display_name')
+        .order('display_name', { ascending: true });
+
+      if (!membersError && allMembers) {
+        setMembers(allMembers as Member[]);
+      } else {
+        console.error('Error loading members:', membersError);
+      }
     }
 
-    loadMe();
+    loadMeAndMembers();
   }, []);
 
   const handleSubmit = () => {
     if (!score) return;
+    if (!selectedAthleteId) return;
 
-    // TEMP: show who it was submitted for in the local list.
-    const label = submitFor === 'me' ? 'Me' : 'Someone else';
-    setScores((prev) => [`${score} (${label})`, ...prev]);
+    const athlete = members.find((m) => m.id === selectedAthleteId);
+    const athleteLabel =
+      selectedAthleteId === meId
+        ? 'Me'
+        : athlete?.display_name || 'Someone else';
 
+    // TEMP: still local-only; next steps will write to Supabase scores with athlete_id + entered_by
+    setScores((prev) => [`${score} (${athleteLabel})`, ...prev]);
     setScore('');
   };
 
   const fallbackName = email ? email.split('@')[0] : '';
 
+  const otherMembers = members.filter((m) => m.id !== meId);
+
   return (
     <main className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-8 px-6 py-12 lg:px-10">
       <div className="absolute right-6 top-6 flex items-center gap-3">
         <div className="h-10 w-10 rounded-full border border-white/10 bg-white/10" />
-        <div className="text-sm font-medium text-slate-200">{displayName ?? fallbackName}</div>
+        <div className="text-sm font-medium text-slate-200">
+          {displayName ?? fallbackName}
+        </div>
       </div>
 
       <section className="card p-8 md:p-10">
@@ -111,15 +140,23 @@ export default function HomePage() {
         <p className="mt-3 max-w-2xl text-slate-200">{todaysWod.focus}</p>
 
         <div className="mt-6">
-          {/* NEW: Submit-on-behalf selector */}
+          {/* Submit-on-behalf: real members list */}
           <label className="mb-2 block text-sm text-white/70">Submit score for</label>
           <select
-            value={submitFor}
-            onChange={(e) => setSubmitFor(e.target.value as 'me' | 'someone_else')}
+            value={selectedAthleteId ?? ''}
+            onChange={(e) => setSelectedAthleteId(e.target.value)}
             className="w-full rounded-lg bg-slate-900 p-3 text-white border border-white/10"
           >
-            <option value="me">Me</option>
-            <option value="someone_else">Someone else…</option>
+            {/* Me */}
+            {meId ? <option value={meId}>Me</option> : <option value="">Me</option>}
+
+            {/* Others */}
+            {otherMembers.length > 0 && <option disabled>──────────</option>}
+            {otherMembers.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.display_name || m.id.slice(0, 8)}
+              </option>
+            ))}
           </select>
 
           <input
@@ -128,6 +165,7 @@ export default function HomePage() {
             placeholder="Enter your score (e.g. 5+12 or 12:34)"
             className="mt-3 w-full rounded-lg bg-slate-900 p-3 text-white"
           />
+
           <button
             onClick={handleSubmit}
             className="mt-3 w-full rounded-lg bg-brand-500 py-3 font-semibold"
