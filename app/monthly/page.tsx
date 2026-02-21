@@ -1,15 +1,14 @@
 // app/monthly/page.tsx
 import { redirect } from "next/navigation";
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from "@supabase/supabase-js";
+import { getSupabaseEnv } from "@/lib/env";
 
 type ScoreRow = {
   athlete_id: string;
   wod_date: string; // YYYY-MM-DD
   time_input: string | null;
   amrap_input: string | null;
-  profiles: {
-    display_name: string | null;
-  } | null;
+  profiles: { display_name: string | null }[] | null;
 };
 
 function getMonthRangeUtc(date = new Date()) {
@@ -33,10 +32,8 @@ function parseTimeToSeconds(input: string): number | null {
 }
 
 function parseAmrapToReps(input: string): number | null {
-  // supports "5+12" meaning 5 rounds + 12 reps (assumes 1 round = 100 reps is NOT correct)
-  // Since your app already has AMRAP sorting logic elsewhere, we keep it simple:
-  // If it’s "rounds+reps", convert to rounds*1000 + reps so rounds dominate ordering.
-  // If it’s a plain number, treat it as reps.
+  // supports "5+12" meaning 5 rounds + 12 reps
+  // Convert to rounds*1000 + reps so rounds dominate ordering.
   const trimmed = input.trim();
 
   const plusMatch = /^(\d+)\s*\+\s*(\d+)$/.exec(trimmed);
@@ -77,7 +74,9 @@ type MonthlyAgg = {
 };
 
 export default async function MonthlyLeaderboardPage() {
-  const supabase = createClient();
+  // Fail-fast for missing env vars, but do it at request time (not module scope)
+  const { url, anonKey } = getSupabaseEnv();
+  const supabase = createClient(url, anonKey);
 
   const {
     data: { user },
@@ -87,7 +86,6 @@ export default async function MonthlyLeaderboardPage() {
 
   const { startYmd, endYmd } = getMonthRangeUtc(new Date());
 
-  // Pull all scores for the month, plus each athlete's display_name
   const { data: rows, error } = await supabase
     .from("scores")
     .select(
@@ -125,9 +123,10 @@ export default async function MonthlyLeaderboardPage() {
   const ensureAgg = (s: ScoreRow) => {
     const id = s.athlete_id;
     if (!agg.has(id)) {
+      const displayName = s.profiles?.[0]?.display_name ?? "Unknown";
       agg.set(id, {
         athlete_id: id,
-        display_name: s.profiles?.display_name ?? "Unknown",
+        display_name: displayName,
         gold: 0,
         silver: 0,
         bronze: 0,
@@ -153,8 +152,7 @@ export default async function MonthlyLeaderboardPage() {
     }
   };
 
-  for (const [date, dayScores] of byDate.entries()) {
-    // Partition into TIME and AMRAP buckets based on which field is present
+  for (const dayScores of byDate.values()) {
     const timeScores: { athlete_id: string; v: number }[] = [];
     const amrapScores: { athlete_id: string; v: number }[] = [];
 
@@ -166,7 +164,7 @@ export default async function MonthlyLeaderboardPage() {
       if (comp.kind === "AMRAP" && comp.value !== null) amrapScores.push({ athlete_id: s.athlete_id, v: comp.value });
     }
 
-    // If both exist for a date (shouldn’t happen), prefer whichever has more entries
+    // Prefer whichever has more entries
     const useTime = timeScores.length >= amrapScores.length;
 
     const sorted = (useTime ? timeScores : amrapScores).sort((a, b) => {
@@ -175,7 +173,6 @@ export default async function MonthlyLeaderboardPage() {
       return b.v - a.v;
     });
 
-    // Top 3 (ties ignored for now; we’ll improve later)
     const top = sorted.slice(0, 3);
 
     if (top[0]) award(top[0].athlete_id, "gold");
@@ -185,7 +182,6 @@ export default async function MonthlyLeaderboardPage() {
 
   const leaderboard = Array.from(agg.values()).sort((a, b) => {
     if (b.points !== a.points) return b.points - a.points;
-    // tie-breaker: more gold, then silver, then bronze, then name
     if (b.gold !== a.gold) return b.gold - a.gold;
     if (b.silver !== a.silver) return b.silver - a.silver;
     if (b.bronze !== a.bronze) return b.bronze - a.bronze;
