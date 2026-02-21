@@ -1,0 +1,29 @@
+name: Codex Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  codex-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            Review this pull request and post a PR comment.
+
+            Your review must explicitly answer each item:
+            1) Any env-var fallback behavior that could mask prod misconfig?
+            2) Did app/layout.tsx become a client component or force client rendering?
+            3) Confirm routes remain /, /monthly, /login.
+            4) Bottom nav hidden on /login and safe-area/padding prevents overlap.
+            5) Any risky refactors or production-impacting changes?
+            6) Recommend merge: YES/NO with rationale.
