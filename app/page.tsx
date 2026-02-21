@@ -257,9 +257,11 @@ export default function HomePage() {
       </section>
 
       <section className="card p-6">
-<h2 className="mb-4 text-xl font-semibold">Leaderboard (Top 3)</h2>          <p className="text-slate-400">Be the first to suffer.</p>
+        <h2 className="mb-4 text-xl font-semibold">Leaderboard (Top 3)</h2>
+        {scores.length === 0 ? (
+          <p className="text-slate-400">Be the first to suffer.</p>
         ) : (
-                   <ul className="space-y-2">
+          <ul className="space-y-2">
             {scores.slice(0, 3).map((s) => (
               <li key={s.id} className="rounded-lg bg-slate-900 p-3 text-slate-200">
                 {(s.time_input ?? s.amrap_input ?? '—')}{' '}
