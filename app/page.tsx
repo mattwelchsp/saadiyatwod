@@ -1,5 +1,5 @@
 'use client';
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { useState } from 'react';
 import { SectionCard } from '@/components/section-card';
@@ -13,15 +13,37 @@ const stats = [
 
 export default function HomePage() {
   const supabase = createClient(
+    const [displayName, setDisplayName] = useState<string | null>(null);
+const [avatarPath, setAvatarPath] = useState<string | null>(null);
+const [email, setEmail] = useState<string | null>(null);
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
 useEffect(() => {
-  async function checkUser() {
+  async function loadMe() {
     const { data } = await supabase.auth.getUser();
-    console.log("USER:", data.user);
+    const user = data.user;
+    console.log("USER:", user);
+
+    if (!user) return;
+
+    setEmail(user.email ?? null);
+
+    const { data: profile, error } = await supabase
+      .from("profiles")
+      .select("display_name, avatar_path")
+      .eq("id", user.id)
+      .single();
+
+    if (!error && profile) {
+      setDisplayName(profile.display_name ?? null);
+      setAvatarPath(profile.avatar_path ?? null);
+    }
   }
+
+  loadMe();
+}, []);
 
   checkUser();
 }, []);
