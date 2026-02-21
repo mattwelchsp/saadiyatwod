@@ -257,8 +257,7 @@ export default function HomePage() {
       </section>
 
       <section className="card p-6">
-<h2 className="mb-4 text-xl font-semibold">Leaderboard (TOP3 ✅ v1)</h2>        {scores.length === 0 ? (
-          <p className="text-slate-400">Be the first to suffer.</p>
+<h2 className="mb-4 text-xl font-semibold">Leaderboard (Top 3)</h2>          <p className="text-slate-400">Be the first to suffer.</p>
         ) : (
                    <ul className="space-y-2">
             {scores.slice(0, 3).map((s) => (
