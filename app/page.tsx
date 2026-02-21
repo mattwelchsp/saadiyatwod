@@ -400,22 +400,38 @@ mapped.sort((a, b) => {
       </section>
 
       <section className="card p-6">
-        <h2 className="mb-4 text-xl font-semibold">Leaderboard (Top 3)</h2>
-        {scores.length === 0 ? (
-          <p className="text-slate-400">Be the first to suffer.</p>
-        ) : (
-          <ul className="space-y-2">
-            {scores.slice(0, 3).map((s) => (
-              <li key={s.id} className="rounded-lg bg-slate-900 p-3 text-slate-200">
-                {(s.time_input ?? s.amrap_input ?? '—')}{' '}
-                <span className="text-slate-400">
-                  ({s.athlete_display_name ?? s.athlete_id.slice(0, 8)})
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+  <h2 className="mb-4 text-xl font-semibold">Leaderboard (Top 3)</h2>
+
+  {workoutType === 'NO_SCORE' ? (
+    <p className="text-slate-400">No score day.</p>
+  ) : scores.length === 0 ? (
+    <p className="text-slate-400">Be the first to suffer.</p>
+  ) : (
+    <ul className="space-y-2">
+      {scores.slice(0, 3).map((s, idx) => {
+        const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : '🥉';
+        const value =
+          workoutType === 'TIME'
+            ? s.time_input ?? '—'
+            : workoutType === 'AMRAP'
+            ? s.amrap_input ?? '—'
+            : '—';
+
+        const name = s.athlete_display_name ?? s.athlete_id.slice(0, 8);
+
+        return (
+          <li key={s.id} className="flex items-center justify-between rounded-lg bg-slate-900 p-3 text-slate-200">
+            <div className="flex items-center gap-3">
+              <span className="text-lg">{medal}</span>
+              <span className="font-medium">{name}</span>
+            </div>
+            <div className="tabular-nums">{value}</div>
+          </li>
+        );
+      })}
+    </ul>
+  )}
+</section>
 
       <section className="grid gap-5 md:grid-cols-3">
         {todaysWod.blocks.map((block) => (
