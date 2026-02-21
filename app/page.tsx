@@ -136,16 +136,28 @@ export default function HomePage() {
       (allMembers ?? []).forEach((m: any) => nameById.set(m.id, m.display_name ?? null));
 
 
-      setScores(
-        (scoreRows ?? []).map((r: any) => ({
-          id: r.id,
-          athlete_id: r.athlete_id,
-          time_input: r.time_input ?? null,
-          amrap_input: r.amrap_input ?? null,
-          created_at: r.created_at,
-          athlete_display_name: nameById.get(r.athlete_id) ?? null,
-        }))
-      );
+            const mapped = (scoreRows ?? []).map((r: any) => ({
+        id: r.id,
+        athlete_id: r.athlete_id,
+        time_input: r.time_input ?? null,
+        amrap_input: r.amrap_input ?? null,
+        created_at: r.created_at,
+        athlete_display_name: nameById.get(r.athlete_id) ?? null,
+      }));
+
+      // Sort TIME workouts (lowest time = best)
+      mapped.sort((a, b) => {
+        if (!a.time_input || !b.time_input) return 0;
+
+        const toSeconds = (t: string) => {
+          const [m, s] = t.split(':').map(Number);
+          return m * 60 + s;
+        };
+
+        return toSeconds(a.time_input) - toSeconds(b.time_input);
+      });
+
+      setScores(mapped);
     }
 
     loadMeAndMembers();
