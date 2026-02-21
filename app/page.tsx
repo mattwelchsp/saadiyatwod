@@ -63,6 +63,7 @@ export default function HomePage() {
   const [selectedAthleteId, setSelectedAthleteId] = useState<string | null>(null);
 
   const [score, setScore] = useState('');
+  const [wodText, setWodText] = useState<string | null>(null);
   const [scores, setScores] = useState<
     Array<{
       id: string;
@@ -114,6 +115,9 @@ export default function HomePage() {
         .order('wod_date', { ascending: false })
         .limit(1)
         .single();
+      if (latestWod?.wod_text) {
+  setWodText(latestWod.wod_text);
+}
 
       if (latestWodErr || !latestWod?.wod_date) {
         console.error('Error loading latest WOD date for leaderboard:', latestWodErr);
