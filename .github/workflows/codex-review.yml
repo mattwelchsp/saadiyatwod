@@ -11,6 +11,7 @@ permissions:
 jobs:
   codex-review:
     runs-on: ubuntu-latest
+    ontinue-on-error: true  # advisory only — never blocks merging
     steps:
       - uses: actions/checkout@v4
       - uses: openai/codex-action@v1
@@ -27,3 +28,4 @@ jobs:
             4) Bottom nav hidden on /login and safe-area/padding prevents overlap.
             5) Any risky refactors or production-impacting changes?
             6) Recommend merge: YES/NO with rationale.
+
