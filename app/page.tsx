@@ -110,7 +110,7 @@ export default function HomePage() {
       // Load latest WOD date (for now) and fetch leaderboard scores from DB
       const { data: latestWod, error: latestWodErr } = await supabase
         .from('wods')
-        .select('wod_date')
+.select('wod_date, wod_text')
         .order('wod_date', { ascending: false })
         .limit(1)
         .single();
@@ -170,7 +170,7 @@ export default function HomePage() {
 
     const { data: latestWod, error: wodErr } = await supabase
       .from('wods')
-      .select('wod_date')
+.select('wod_date, wod_text')
       .order('wod_date', { ascending: false })
       .limit(1)
       .single();
