@@ -388,8 +388,13 @@ mapped.sort((a, b) => {
           <input
   value={score}
   onChange={(e) => setScore(e.target.value)}
-  placeholder="Enter your score (e.g. 5+12 or 12:34)"
-  disabled={workoutType === 'NO_SCORE'}
+placeholder={
+  workoutType === 'TIME'
+    ? 'Enter time (mm:ss) e.g. 12:34'
+    : workoutType === 'AMRAP'
+    ? 'Enter AMRAP score (rounds+reps) e.g. 5+12'
+    : 'Enter your score'
+}  disabled={workoutType === 'NO_SCORE'}
   className={`mt-3 w-full rounded-lg p-3 text-white ${
     workoutType === 'NO_SCORE' ? 'bg-slate-800 opacity-50 cursor-not-allowed' : 'bg-slate-900'
   }`}
