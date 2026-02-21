@@ -1,406 +1,457 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { detectWorkoutTypeFromWodText, WorkoutType } from '../lib/wodType';
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+import { supabase } from '../lib/supabase';
+import { detectWorkoutTypeFromWodText, parseTimeInput, parseAmrapInput, formatSeconds, WorkoutType } from '../lib/wodType';
+import { todayInTZ, formatDateDisplay, isWeekend } from '../lib/timezone';
+import BottomNav from '../components/BottomNav';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type Member = {
-  id: string;
-  display_name: string | null;
+type Profile = { id: string; display_name: string | null; avatar_url: string | null };
+
+type Wod = {
+  wod_date: string;
+  wod_text: string;
+  workout_type_override: string | null;
+  is_team: boolean;
+  team_size: number;
 };
 
-type ScoreEntry = {
+type Score = {
   id: string;
   athlete_id: string;
+  time_seconds: number | null;
   time_input: string | null;
+  amrap_rounds: number | null;
+  amrap_reps: number | null;
   amrap_input: string | null;
+  is_rx: boolean;
+  team_id: string | null;
   created_at: string;
-  athlete_display_name: string | null;
+  last_edited_at: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
 };
 
-// ── Sort helper ────────────────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
-function sortScores(rows: ScoreEntry[], workoutType: WorkoutType): ScoreEntry[] {
-  const copy = [...rows];
-
-  if (workoutType === 'TIME') {
-    const toSeconds = (t: string | null): number => {
-      if (!t) return Number.POSITIVE_INFINITY;
-      const parts = t.trim().split(':').map(Number);
-      if (parts.length !== 2 || parts.some(Number.isNaN)) return Number.POSITIVE_INFINITY;
-      return parts[0] * 60 + parts[1];
-    };
-    copy.sort((a, b) => toSeconds(a.time_input) - toSeconds(b.time_input));
-    return copy;
+function scoreDisplay(s: Score, type: WorkoutType): string {
+  if (type === 'TIME') {
+    if (s.time_seconds != null) return formatSeconds(s.time_seconds);
+    if (s.time_input) return s.time_input;
+    return '—';
   }
-
-  if (workoutType === 'AMRAP') {
-    const parseAmrap = (v: string | null) => {
-      if (!v) return { rounds: -1, reps: -1 };
-      const s = v.trim();
-      const plus = /^(\d+)\s*\+\s*(\d+)$/.exec(s);
-      if (plus) return { rounds: Number(plus[1]), reps: Number(plus[2]) };
-      const num = Number(s);
-      if (!Number.isNaN(num)) return { rounds: 0, reps: num };
-      return { rounds: -1, reps: -1 };
-    };
-    copy.sort((a, b) => {
-      const av = parseAmrap(a.amrap_input);
-      const bv = parseAmrap(b.amrap_input);
-      if (av.rounds < 0 && bv.rounds < 0) return 0;
-      if (av.rounds < 0) return 1;
-      if (bv.rounds < 0) return -1;
-      if (av.rounds !== bv.rounds) return bv.rounds - av.rounds;
-      return bv.reps - av.reps;
-    });
-    return copy;
+  if (type === 'AMRAP') {
+    if (s.amrap_rounds != null && s.amrap_reps != null) return `${s.amrap_rounds}+${s.amrap_reps}`;
+    if (s.amrap_input) return s.amrap_input;
+    return '—';
   }
-
-  // NO_SCORE / UNKNOWN: newest-first
-  return copy.sort(
-    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-  );
+  return '—';
 }
 
-// ── Page component ─────────────────────────────────────────────────────────────
+function sortScores(rows: Score[], type: WorkoutType): Score[] {
+  const copy = [...rows];
+  if (type === 'TIME') {
+    return copy.sort((a, b) => {
+      const as = a.time_seconds ?? Infinity;
+      const bs = b.time_seconds ?? Infinity;
+      return as - bs;
+    });
+  }
+  if (type === 'AMRAP') {
+    return copy.sort((a, b) => {
+      const ar = (a.amrap_rounds ?? -1) * 10000 + (a.amrap_reps ?? -1);
+      const br = (b.amrap_rounds ?? -1) * 10000 + (b.amrap_reps ?? -1);
+      return br - ar;
+    });
+  }
+  return copy;
+}
+
+function canEdit(score: Score): boolean {
+  if (score.last_edited_at) return false; // already used edit
+  const age = Date.now() - new Date(score.created_at).getTime();
+  return age < 30 * 60 * 1000;
+}
+
+function effectiveType(wod: Wod | null): WorkoutType {
+  if (!wod) return 'UNKNOWN';
+  return (wod.workout_type_override as WorkoutType | null) ?? detectWorkoutTypeFromWodText(wod.wod_text);
+}
+
+const MEDALS = ['🥇', '🥈', '🥉'];
+
+// ── Component ──────────────────────────────────────────────────────────────────
 
 export default function HomePage() {
   const router = useRouter();
+  const today = todayInTZ();
+  const weekend = isWeekend(today);
 
   const [meId, setMeId] = useState<string | null>(null);
-  const [displayName, setDisplayName] = useState<string | null>(null);
-  const [email, setEmail] = useState<string | null>(null);
+  const [meProfile, setMeProfile] = useState<Profile | null>(null);
+  const [members, setMembers] = useState<Profile[]>([]);
+  const [wod, setWod] = useState<Wod | null>(null);
+  const [scores, setScores] = useState<Score[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const [members, setMembers] = useState<Member[]>([]);
-  const [selectedAthleteId, setSelectedAthleteId] = useState<string | null>(null);
-
-  const [score, setScore] = useState('');
-  const [wodText, setWodText] = useState<string | null>(null);
-  const [scores, setScores] = useState<ScoreEntry[]>([]);
-
+  // submission state
+  const [isRx, setIsRx] = useState(true);
+  const [timeInput, setTimeInput] = useState('');
+  const [amrapRounds, setAmrapRounds] = useState('');
+  const [amrapReps, setAmrapReps] = useState('');
+  const [teamMates, setTeamMates] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitMsg, setSubmitMsg] = useState<string | null>(null);
+  const [submitErr, setSubmitErr] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
 
-  const workoutType = detectWorkoutTypeFromWodText(wodText);
+  const type = effectiveType(wod);
 
-  useEffect(() => {
-    async function load() {
-      const { data } = await supabase.auth.getUser();
-      const user = data.user;
+  const loadData = useCallback(async () => {
+    const { data: authData } = await supabase.auth.getUser();
+    const user = authData.user;
+    if (!user) { router.replace('/login'); return; }
 
-      if (!user) {
-        router.replace('/login');
-        return;
-      }
+    setMeId(user.id);
 
-      setMeId(user.id);
-      setSelectedAthleteId(user.id);
-      setEmail(user.email ?? null);
+    const [profileRes, membersRes, wodRes] = await Promise.all([
+      supabase.from('profiles').select('id, display_name, avatar_url').eq('id', user.id).single(),
+      supabase.from('profiles').select('id, display_name, avatar_url').order('display_name'),
+      supabase.from('wods').select('wod_date, wod_text, workout_type_override, is_team, team_size').eq('wod_date', today).maybeSingle(),
+    ]);
 
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('display_name')
-        .eq('id', user.id)
-        .single();
+    if (profileRes.data) setMeProfile(profileRes.data as Profile);
+    if (membersRes.data) setMembers(membersRes.data as Profile[]);
+    if (wodRes.data) setWod(wodRes.data as Wod);
 
-      if (profile) setDisplayName(profile.display_name ?? null);
-
-      const { data: allMembers } = await supabase
-        .from('profiles')
-        .select('id, display_name')
-        .order('display_name', { ascending: true });
-
-      const memberList = (allMembers ?? []) as Member[];
-      setMembers(memberList);
-
-      const { data: latestWod } = await supabase
-        .from('wods')
-        .select('wod_date, wod_text')
-        .order('wod_date', { ascending: false })
-        .limit(1)
-        .single();
-
-      if (latestWod?.wod_text) setWodText(latestWod.wod_text);
-
-      if (!latestWod?.wod_date) return;
-
+    if (wodRes.data) {
       const { data: scoreRows } = await supabase
         .from('scores')
-        .select('id, athlete_id, time_input, amrap_input, created_at')
-        .eq('wod_date', latestWod.wod_date)
-        .order('created_at', { ascending: false });
+        .select('id, athlete_id, time_seconds, time_input, amrap_rounds, amrap_reps, amrap_input, is_rx, team_id, created_at, last_edited_at')
+        .eq('wod_date', today);
 
-      const nameById = new Map<string, string | null>(
-        memberList.map((m) => [m.id, m.display_name])
-      );
-
-      const mapped: ScoreEntry[] = (scoreRows ?? []).map((r: any) => ({
-        id: r.id,
-        athlete_id: r.athlete_id,
-        time_input: r.time_input ?? null,
-        amrap_input: r.amrap_input ?? null,
-        created_at: r.created_at,
-        athlete_display_name: nameById.get(r.athlete_id) ?? null,
-      }));
-
-      setScores(sortScores(mapped, detectWorkoutTypeFromWodText(latestWod.wod_text)));
+      if (scoreRows) {
+        const nameMap = new Map((membersRes.data ?? []).map((m: any) => [m.id, { display_name: m.display_name, avatar_url: m.avatar_url }]));
+        const mapped: Score[] = scoreRows.map((r: any) => ({
+          ...r,
+          display_name: nameMap.get(r.athlete_id)?.display_name ?? null,
+          avatar_url: nameMap.get(r.athlete_id)?.avatar_url ?? null,
+        }));
+        setScores(sortScores(mapped, (wodRes.data.workout_type_override as WorkoutType | null) ?? detectWorkoutTypeFromWodText(wodRes.data.wod_text)));
+      }
     }
+    setLoading(false);
+  }, [router, today]);
 
-    load();
-  }, [router]);
+  useEffect(() => { loadData(); }, [loadData]);
 
-  const handleSubmit = async () => {
-    if (!score.trim() || !selectedAthleteId || !meId) return;
-    if (workoutType === 'NO_SCORE' || workoutType === 'UNKNOWN') {
-      setSubmitError('This workout type does not accept a score.');
-      return;
-    }
+  const myScore = scores.find((s) => s.athlete_id === meId);
 
+  const handleSubmit = async (editMode = false) => {
+    if (!meId) return;
     setSubmitting(true);
-    setSubmitError(null);
-    setSuccessMsg(null);
+    setSubmitErr(null);
+    setSubmitMsg(null);
 
-    const { data: latestWod, error: wodErr } = await supabase
-      .from('wods')
-      .select('wod_date')
-      .order('wod_date', { ascending: false })
-      .limit(1)
-      .single();
+    let timeSeconds: number | null = null;
+    let rounds: number | null = null;
+    let reps: number | null = null;
 
-    if (wodErr || !latestWod?.wod_date) {
-      setSubmitError('No WOD found. Add today\'s WOD first.');
-      setSubmitting(false);
-      return;
+    if (type === 'TIME') {
+      const parsed = parseTimeInput(timeInput);
+      if (parsed === null) { setSubmitErr('Enter time as mm:ss (e.g. 12:34)'); setSubmitting(false); return; }
+      timeSeconds = parsed;
+    } else if (type === 'AMRAP') {
+      const r = parseInt(amrapRounds, 10);
+      const e = parseInt(amrapReps, 10);
+      if (isNaN(r) || isNaN(e)) { setSubmitErr('Enter whole numbers for rounds and reps'); setSubmitting(false); return; }
+      rounds = r; reps = e;
     }
 
-    const wodDate = latestWod.wod_date;
+    const teamIds = wod?.is_team ? Array.from(new Set([meId, ...teamMates])) : [meId];
 
-    const insertPayload: any = {
-      athlete_id: selectedAthleteId,
-      entered_by: meId,
-      submitted_by: meId,
-      wod_date: wodDate,
-      is_rx: true,
-      is_team: false,
-      time_input: null,
-      amrap_input: null,
-    };
-
-    if (workoutType === 'TIME') {
-      insertPayload.time_input = score.trim();
-    } else {
-      insertPayload.amrap_input = score.trim();
+    if (wod?.is_team && teamIds.length < 2) {
+      setSubmitErr('Select at least one teammate'); setSubmitting(false); return;
     }
 
-    const { error: insertErr } = await supabase.from('scores').insert(insertPayload);
+    const teamId = wod?.is_team ? crypto.randomUUID() : null;
 
-    if (insertErr) {
-      setSubmitError(insertErr.message);
-      setSubmitting(false);
-      return;
+    const athletes = wod?.is_team ? teamIds : [meId];
+
+    let anyError = false;
+    for (const athleteId of athletes) {
+      const payload: any = {
+        athlete_id: athleteId,
+        entered_by: meId,
+        submitted_by: meId,
+        wod_date: today,
+        is_rx: isRx,
+        is_team: wod?.is_team ?? false,
+        team_id: teamId,
+        time_seconds: timeSeconds,
+        time_input: timeSeconds != null ? timeInput : null,
+        amrap_rounds: rounds,
+        amrap_reps: reps,
+        amrap_input: rounds != null ? `${rounds}+${reps}` : null,
+      };
+
+      if (editMode && myScore) {
+        const { error } = await supabase
+          .from('scores')
+          .update({ ...payload, last_edited_at: new Date().toISOString() })
+          .eq('id', myScore.id);
+        if (error) { setSubmitErr(error.message); anyError = true; break; }
+      } else {
+        const { error } = await supabase.from('scores').insert(payload);
+        if (error) { setSubmitErr(error.message); anyError = true; break; }
+      }
     }
 
-    setScore('');
-
-    const athleteName =
-      members.find((m) => m.id === selectedAthleteId)?.display_name ??
-      displayName ??
-      'Athlete';
-    setSuccessMsg(`Stay hard, ${athleteName}!`);
-
-    // Reload leaderboard
-    const { data: scoreRows } = await supabase
-      .from('scores')
-      .select('id, athlete_id, time_input, amrap_input, created_at')
-      .eq('wod_date', wodDate)
-      .order('created_at', { ascending: false });
-
-    const nameById = new Map<string, string | null>(
-      members.map((m) => [m.id, m.display_name])
-    );
-
-    const mapped: ScoreEntry[] = (scoreRows ?? []).map((r: any) => ({
-      id: r.id,
-      athlete_id: r.athlete_id,
-      time_input: r.time_input ?? null,
-      amrap_input: r.amrap_input ?? null,
-      created_at: r.created_at,
-      athlete_display_name: nameById.get(r.athlete_id) ?? null,
-    }));
-
-    setScores(sortScores(mapped, workoutType));
+    if (!anyError) {
+      setSubmitMsg('✓ Stay hard — David Goggins');
+      setTimeInput(''); setAmrapRounds(''); setAmrapReps('');
+      setEditing(false);
+      await loadData();
+    }
     setSubmitting(false);
   };
 
-  const fallbackName = email ? email.split('@')[0] : '';
-  const userName = displayName ?? fallbackName;
+  if (loading) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-black">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+      </main>
+    );
+  }
 
-  const todayLabel = new Date().toLocaleDateString('en-US', {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-  });
-
-  const scoreLabel =
-    workoutType === 'TIME'
-      ? 'Time (MM:SS)'
-      : workoutType === 'AMRAP'
-      ? 'Score (rounds+reps, e.g. 5+12)'
-      : null;
+  const sorted = scores;
+  const top3 = sorted.slice(0, 3);
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-6 px-6 py-12 pb-24 text-slate-100">
+    <main className="mx-auto flex min-h-screen w-full max-w-lg flex-col gap-5 bg-black px-4 py-10 pb-28 text-slate-100">
 
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">SaadiyatWOD</h1>
-          <p className="mt-1 text-sm text-slate-400">{todayLabel}</p>
+          <h1 className="text-xl font-bold tracking-tight text-white">SaadiyatWOD</h1>
+          <p className="mt-0.5 text-xs text-slate-500">{formatDateDisplay(today)}</p>
         </div>
-        <div className="text-sm font-medium text-slate-300">{userName}</div>
-      </div>
-
-      {/* WOD Card */}
-      <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
-        <h2 className="text-base font-semibold text-white">Today&apos;s WOD</h2>
-        {wodText ? (
-          <pre className="mt-3 whitespace-pre-wrap text-sm text-slate-200">{wodText}</pre>
-        ) : (
-          <p className="mt-3 text-sm text-slate-400">No WOD posted yet.</p>
-        )}
-        {workoutType !== 'UNKNOWN' && (
-          <span className="mt-4 inline-block rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-medium text-slate-200">
-            {workoutType}
-          </span>
-        )}
-      </section>
-
-      {/* Score Submission */}
-      {scoreLabel && (
-        <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
-          <h2 className="text-base font-semibold text-white">Submit Score</h2>
-
-          {/* Athlete selector */}
-          {members.length > 1 && (
-            <div className="mt-4">
-              <label className="mb-1 block text-xs text-slate-400">Athlete</label>
-              <select
-                value={selectedAthleteId ?? ''}
-                onChange={(e) => setSelectedAthleteId(e.target.value)}
-                className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2 text-sm text-slate-100 focus:outline-none"
-              >
-                {members.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.display_name ?? m.id}
-                    {m.id === meId ? ' (me)' : ''}
-                  </option>
-                ))}
-              </select>
+        <a href="/me" className="flex items-center gap-2">
+          {meProfile?.avatar_url ? (
+            <img src={meProfile.avatar_url} alt="" className="h-8 w-8 rounded-full object-cover" />
+          ) : (
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-xs font-bold text-white">
+              {(meProfile?.display_name ?? '?')[0]?.toUpperCase()}
             </div>
           )}
-
-          {/* Score input */}
-          <div className="mt-4">
-            <label className="mb-1 block text-xs text-slate-400">{scoreLabel}</label>
-            <input
-              type="text"
-              value={score}
-              onChange={(e) => {
-                setScore(e.target.value);
-                setSuccessMsg(null);
-                setSubmitError(null);
-              }}
-              onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
-              placeholder={workoutType === 'TIME' ? '12:34' : '5+12'}
-              className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none"
-            />
-          </div>
-
-          <button
-            onClick={handleSubmit}
-            disabled={submitting || !score.trim()}
-            className="mt-4 rounded-xl bg-white px-6 py-2 text-sm font-semibold text-black hover:bg-slate-200 disabled:opacity-40"
-          >
-            {submitting ? 'Saving...' : 'Submit'}
-          </button>
-
-          {successMsg && (
-            <p className="mt-3 text-sm font-medium text-green-400">{successMsg}</p>
-          )}
-          {submitError && (
-            <p className="mt-3 text-sm text-red-400">{submitError}</p>
-          )}
-        </section>
-      )}
-
-      {/* Leaderboard */}
-      <section>
-        <h2 className="mb-3 text-base font-semibold text-white">Today&apos;s Leaderboard</h2>
-
-        {scores.length === 0 ? (
-          <div className="rounded-2xl border border-white/10 bg-white/5 px-6 py-8 text-center text-sm text-slate-400">
-            No scores yet. Be the first to suffer.
-          </div>
-        ) : (
-          <div className="overflow-hidden rounded-2xl border border-white/10">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-white/5 text-slate-400">
-                <tr>
-                  <th className="px-4 py-3 font-medium">#</th>
-                  <th className="px-4 py-3 font-medium">Athlete</th>
-                  <th className="px-4 py-3 text-right font-medium">Score</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/10">
-                {scores.map((s, idx) => {
-                  const isMe = s.athlete_id === meId;
-                  const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : null;
-                  const scoreDisplay =
-                    s.time_input ?? s.amrap_input ?? '—';
-                  return (
-                    <tr
-                      key={s.id}
-                      className={isMe ? 'bg-white/10' : 'hover:bg-white/5'}
-                    >
-                      <td className="px-4 py-3 text-slate-400">
-                        {medal ?? idx + 1}
-                      </td>
-                      <td className="px-4 py-3 font-medium text-slate-100">
-                        {s.athlete_display_name ?? 'Unknown'}
-                        {isMe && (
-                          <span className="ml-2 text-xs text-slate-400">(you)</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-right font-semibold text-slate-100">
-                        {scoreDisplay}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      {/* Bottom Nav */}
-      <div className="fixed bottom-0 left-0 right-0 border-t border-white/10 bg-black/80 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-around px-6 py-3">
-          <a href="/" className="text-sm font-semibold text-white">Home</a>
-          <a href="/monthly" className="text-sm font-medium text-slate-300">Monthly</a>
-          <a href="/admin" className="text-sm font-medium text-slate-300">Post WOD</a>
-        </div>
+          <span className="text-sm text-slate-300">{meProfile?.display_name ?? ''}</span>
+        </a>
       </div>
 
+      {weekend ? (
+        <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center">
+          <div className="text-3xl">🏖️</div>
+          <p className="mt-3 font-semibold text-white">Weekend session</p>
+          <p className="mt-1 text-sm text-slate-400">No leaderboard today. Go touch grass.</p>
+        </div>
+      ) : (
+        <>
+          {/* WOD Card */}
+          <section className="rounded-2xl border border-white/10 bg-[#0a0f1e] p-5">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-slate-300">Today&apos;s WOD</h2>
+              {type !== 'UNKNOWN' && (
+                <span className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${
+                  type === 'TIME' ? 'border-blue-500/30 bg-blue-500/10 text-blue-300' :
+                  type === 'AMRAP' ? 'border-orange-500/30 bg-orange-500/10 text-orange-300' :
+                  'border-slate-500/30 bg-slate-500/10 text-slate-400'
+                }`}>
+                  {type}
+                </span>
+              )}
+            </div>
+            {wod ? (
+              <pre className="whitespace-pre-wrap text-sm leading-relaxed text-slate-100">{wod.wod_text}</pre>
+            ) : (
+              <p className="text-sm text-slate-500">No WOD posted yet.</p>
+            )}
+          </section>
+
+          {/* Score Submission */}
+          {type !== 'NO_SCORE' && type !== 'UNKNOWN' && wod && (
+            <section className="rounded-2xl border border-white/10 bg-[#0a0f1e] p-5">
+              <h2 className="mb-4 text-sm font-semibold text-slate-300">
+                {myScore && !editing ? 'Your Score' : 'Submit Score'}
+              </h2>
+
+              {myScore && !editing ? (
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xl font-bold text-white">{scoreDisplay(myScore, type)}</p>
+                    <p className="mt-0.5 text-xs text-slate-500">{myScore.is_rx ? 'Rx' : 'Scaled'}</p>
+                  </div>
+                  {canEdit(myScore) && (
+                    <button
+                      onClick={() => { setEditing(true); setSubmitMsg(null); }}
+                      className="rounded-xl border border-white/20 px-4 py-1.5 text-xs font-medium text-slate-300 hover:bg-white/10"
+                    >
+                      Edit (30 min)
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <>
+                  {/* Rx / Scaled */}
+                  <div className="mb-4 flex rounded-xl border border-white/10 p-0.5 text-sm">
+                    {['Rx', 'Scaled'].map((label) => (
+                      <button
+                        key={label}
+                        onClick={() => setIsRx(label === 'Rx')}
+                        className={`flex-1 rounded-lg py-1.5 font-medium transition-colors ${
+                          (label === 'Rx') === isRx
+                            ? 'bg-white text-black'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* TIME input */}
+                  {type === 'TIME' && (
+                    <input
+                      type="text"
+                      value={timeInput}
+                      onChange={(e) => setTimeInput(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleSubmit(editing)}
+                      placeholder="mm:ss"
+                      className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none"
+                    />
+                  )}
+
+                  {/* AMRAP input */}
+                  {type === 'AMRAP' && (
+                    <div className="flex gap-3">
+                      <div className="flex-1">
+                        <label className="mb-1 block text-xs text-slate-500">Rounds</label>
+                        <input
+                          type="number" min="0"
+                          value={amrapRounds}
+                          onChange={(e) => setAmrapRounds(e.target.value)}
+                          placeholder="0"
+                          className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none"
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <label className="mb-1 block text-xs text-slate-500">Extra reps</label>
+                        <input
+                          type="number" min="0"
+                          value={amrapReps}
+                          onChange={(e) => setAmrapReps(e.target.value)}
+                          placeholder="0"
+                          className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Team selector */}
+                  {wod.is_team && (
+                    <div className="mt-4">
+                      <label className="mb-2 block text-xs text-slate-500">
+                        Teammates (you are auto-included)
+                      </label>
+                      <div className="max-h-40 overflow-y-auto rounded-xl border border-white/10 bg-slate-900 p-2">
+                        {members.filter((m) => m.id !== meId).map((m) => (
+                          <label key={m.id} className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 hover:bg-white/5">
+                            <input
+                              type="checkbox"
+                              checked={teamMates.includes(m.id)}
+                              onChange={(e) => {
+                                if (e.target.checked) setTeamMates((p) => [...p, m.id]);
+                                else setTeamMates((p) => p.filter((x) => x !== m.id));
+                              }}
+                              className="accent-white"
+                            />
+                            <span className="text-sm text-slate-200">{m.display_name ?? m.id}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <button
+                    onClick={() => handleSubmit(editing)}
+                    disabled={submitting}
+                    className="mt-4 w-full rounded-xl bg-white py-2.5 text-sm font-semibold text-black hover:bg-slate-200 disabled:opacity-40"
+                  >
+                    {submitting ? 'Saving...' : editing ? 'Save Edit' : 'Submit Score'}
+                  </button>
+
+                  {editing && (
+                    <button onClick={() => setEditing(false)} className="mt-2 w-full text-xs text-slate-500 hover:text-slate-300">
+                      Cancel
+                    </button>
+                  )}
+                </>
+              )}
+
+              {submitMsg && <p className="mt-3 text-sm font-medium text-green-400">{submitMsg}</p>}
+              {submitErr && <p className="mt-3 text-sm text-red-400">{submitErr}</p>}
+            </section>
+          )}
+
+          {/* Top 3 */}
+          <section>
+            <h2 className="mb-3 text-sm font-semibold text-slate-400 uppercase tracking-widest">Top 3 Today</h2>
+            {type === 'NO_SCORE' ? (
+              <p className="text-sm text-slate-500">No leaderboard for this workout.</p>
+            ) : top3.length === 0 ? (
+              <div className="rounded-2xl border border-white/10 bg-[#0a0f1e] px-6 py-8 text-center text-sm text-slate-500">
+                Be the first to suffer.
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {top3.map((s, idx) => (
+                  <div
+                    key={s.id}
+                    className={`flex items-center gap-3 rounded-2xl border px-4 py-3 ${
+                      s.athlete_id === meId
+                        ? 'border-white/20 bg-white/10'
+                        : 'border-white/10 bg-[#0a0f1e]'
+                    }`}
+                  >
+                    <span className="text-xl w-8 text-center">{MEDALS[idx]}</span>
+                    {s.avatar_url ? (
+                      <img src={s.avatar_url} alt="" className="h-8 w-8 rounded-full object-cover" />
+                    ) : (
+                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-xs font-bold">
+                        {(s.display_name ?? '?')[0]?.toUpperCase()}
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="truncate text-sm font-medium text-white">{s.display_name ?? 'Unknown'}</p>
+                      <p className="text-xs text-slate-500">{s.is_rx ? 'Rx' : 'Scaled'}</p>
+                    </div>
+                    <span className="text-sm font-bold text-white">{scoreDisplay(s, type)}</span>
+                  </div>
+                ))}
+                {sorted.length > 3 && (
+                  <a href="/leaderboard" className="mt-1 text-center text-xs text-slate-500 hover:text-slate-300">
+                    View full leaderboard →
+                  </a>
+                )}
+              </div>
+            )}
+          </section>
+        </>
+      )}
+
+      <BottomNav />
     </main>
   );
 }

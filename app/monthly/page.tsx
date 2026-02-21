@@ -1,115 +1,174 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@supabase/supabase-js';
+import { supabase } from '../../lib/supabase';
+import { detectWorkoutTypeFromWodText, formatSeconds, WorkoutType } from '../../lib/wodType';
+import { todayInTZ } from '../../lib/timezone';
+import BottomNav from '../../components/BottomNav';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+// ── Types ──────────────────────────────────────────────────────────────────────
 
-type ScoreRow = {
-  athlete_id: string;
+type Profile = { id: string; display_name: string | null; avatar_url: string | null };
+
+type ScoreRaw = {
+  id: string;
   wod_date: string;
+  athlete_id: string;
+  time_seconds: number | null;
   time_input: string | null;
+  amrap_rounds: number | null;
+  amrap_reps: number | null;
   amrap_input: string | null;
-  profiles: { display_name: string | null } | null;
+  is_rx: boolean;
+  team_id: string | null;
 };
 
-type MonthlyAgg = {
-  athlete_id: string;
+type WodRaw = {
+  wod_date: string;
+  wod_text: string;
+  workout_type_override: string | null;
+};
+
+type AthletePoints = {
+  id: string;
   display_name: string;
+  avatar_url: string | null;
   gold: number;
   silver: number;
   bronze: number;
-  points: number;
+  total: number;
 };
 
-function getMonthRangeUtc(date = new Date()) {
-  const year = date.getUTCFullYear();
-  const month = date.getUTCMonth();
-  const start = new Date(Date.UTC(year, month, 1));
-  const end = new Date(Date.UTC(year, month + 1, 1));
-  const toYmd = (d: Date) => d.toISOString().slice(0, 10);
-  return { startYmd: toYmd(start), endYmd: toYmd(end) };
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+function effectiveType(wod: WodRaw): WorkoutType {
+  return (wod.workout_type_override as WorkoutType | null) ?? detectWorkoutTypeFromWodText(wod.wod_text);
 }
 
-function parseTimeToSeconds(input: string): number | null {
-  const match = /^(\d+):([0-5]\d)$/.exec(input.trim());
-  if (!match) return null;
-  return Number(match[1]) * 60 + Number(match[2]);
-}
+/** Sort scores for a single WOD and return ranked athlete_ids in order */
+function rankForDate(scores: ScoreRaw[], type: WorkoutType): string[][] {
+  if (type === 'NO_SCORE' || type === 'UNKNOWN') return [];
 
-function parseAmrapToReps(input: string): number | null {
-  const plusMatch = /^(\d+)\s*\+\s*(\d+)$/.exec(input.trim());
-  if (plusMatch) return Number(plusMatch[1]) * 1000 + Number(plusMatch[2]);
-  const numMatch = /^(\d+)$/.exec(input.trim());
-  if (numMatch) return Number(numMatch[1]);
-  return null;
-}
+  // De-dupe by athlete (first occurrence wins)
+  const seen = new Set<string>();
+  const unique = scores.filter((s) => {
+    if (seen.has(s.athlete_id)) return false;
+    seen.add(s.athlete_id);
+    return true;
+  });
 
-function scoreToComparable(s: ScoreRow): { kind: 'TIME' | 'AMRAP' | 'NONE'; value: number | null } {
-  if (s.time_input?.trim()) return { kind: 'TIME', value: parseTimeToSeconds(s.time_input) };
-  if (s.amrap_input?.trim()) return { kind: 'AMRAP', value: parseAmrapToReps(s.amrap_input) };
-  return { kind: 'NONE', value: null };
-}
-
-function computeLeaderboard(scores: ScoreRow[]): MonthlyAgg[] {
-  const byDate = new Map<string, ScoreRow[]>();
-  for (const s of scores) {
-    if (!byDate.has(s.wod_date)) byDate.set(s.wod_date, []);
-    byDate.get(s.wod_date)!.push(s);
-  }
-
-  const agg = new Map<string, MonthlyAgg>();
-  const ensureAgg = (s: ScoreRow) => {
-    if (!agg.has(s.athlete_id)) {
-      agg.set(s.athlete_id, {
-        athlete_id: s.athlete_id,
-        display_name: s.profiles?.display_name ?? 'Unknown',
-        gold: 0,
-        silver: 0,
-        bronze: 0,
-        points: 0,
-      });
+  const sorted = [...unique].sort((a, b) => {
+    if (type === 'TIME') {
+      const as = a.time_seconds ?? Infinity;
+      const bs = b.time_seconds ?? Infinity;
+      return as - bs;
     }
-    return agg.get(s.athlete_id)!;
-  };
+    // AMRAP
+    const av = (a.amrap_rounds ?? -1) * 10000 + (a.amrap_reps ?? -1);
+    const bv = (b.amrap_rounds ?? -1) * 10000 + (b.amrap_reps ?? -1);
+    return bv - av;
+  });
 
-  const award = (id: string, medal: 'gold' | 'silver' | 'bronze') => {
-    const a = agg.get(id);
-    if (!a) return;
-    a[medal] += 1;
-    a.points += medal === 'gold' ? 3 : medal === 'silver' ? 2 : 1;
-  };
+  if (sorted.length === 0) return [];
 
-  for (const dayScores of byDate.values()) {
-    const timeScores: { athlete_id: string; v: number }[] = [];
-    const amrapScores: { athlete_id: string; v: number }[] = [];
+  // Group ties into bands
+  const ranks: string[][] = [];
+  let i = 0;
+  while (i < sorted.length) {
+    const current = sorted[i];
+    const band: string[] = [current.athlete_id];
+    let j = i + 1;
 
-    for (const s of dayScores) {
-      ensureAgg(s);
-      const comp = scoreToComparable(s);
-      if (comp.kind === 'TIME' && comp.value !== null)
-        timeScores.push({ athlete_id: s.athlete_id, v: comp.value });
-      if (comp.kind === 'AMRAP' && comp.value !== null)
-        amrapScores.push({ athlete_id: s.athlete_id, v: comp.value });
+    while (j < sorted.length) {
+      const next = sorted[j];
+      const tied =
+        type === 'TIME'
+          ? (current.time_seconds ?? Infinity) === (next.time_seconds ?? Infinity)
+          : (current.amrap_rounds ?? -1) === (next.amrap_rounds ?? -1) &&
+            (current.amrap_reps ?? -1) === (next.amrap_reps ?? -1);
+      if (tied) { band.push(next.athlete_id); j++; }
+      else break;
     }
 
-    const useTime = timeScores.length >= amrapScores.length;
-    const sorted = (useTime ? timeScores : amrapScores).sort((a, b) =>
-      useTime ? a.v - b.v : b.v - a.v
-    );
-
-    const top = sorted.slice(0, 3);
-    if (top[0]) award(top[0].athlete_id, 'gold');
-    if (top[1]) award(top[1].athlete_id, 'silver');
-    if (top[2]) award(top[2].athlete_id, 'bronze');
+    ranks.push(band);
+    i = j;
   }
 
-  return Array.from(agg.values()).sort((a, b) => {
-    if (b.points !== a.points) return b.points - a.points;
+  return ranks.slice(0, 3); // only top 3 medal positions
+}
+
+function computePoints(
+  wods: WodRaw[],
+  allScores: ScoreRaw[],
+  profiles: Profile[]
+): AthletePoints[] {
+  const profileMap = new Map(profiles.map((p) => [p.id, p]));
+  const pointsMap = new Map<string, { gold: number; silver: number; bronze: number }>();
+
+  const ensure = (id: string) => {
+    if (!pointsMap.has(id)) pointsMap.set(id, { gold: 0, silver: 0, bronze: 0 });
+    return pointsMap.get(id)!;
+  };
+
+  for (const wod of wods) {
+    const type = effectiveType(wod);
+    const scoresForDate = allScores.filter((s) => s.wod_date === wod.wod_date);
+
+    // For team WODs, group by team_id and pick one representative per team
+    const teamMap = new Map<string, ScoreRaw>();
+    const individuals: ScoreRaw[] = [];
+    for (const s of scoresForDate) {
+      if (s.team_id) {
+        if (!teamMap.has(s.team_id)) teamMap.set(s.team_id, s);
+      } else {
+        individuals.push(s);
+      }
+    }
+    const representatives = [...Array.from(teamMap.values()), ...individuals];
+
+    const rankBands = rankForDate(representatives, type);
+    const pts = [3, 2, 1];
+
+    rankBands.forEach((band, rankIdx) => {
+      const p = pts[rankIdx] ?? 0;
+      if (p === 0) return;
+
+      for (const athleteId of band) {
+        const rep = scoresForDate.find((s) => s.athlete_id === athleteId);
+        if (!rep) continue;
+
+        // For team scores, give points to ALL team members
+        const teamMembers = rep.team_id
+          ? scoresForDate.filter((s) => s.team_id === rep.team_id).map((s) => s.athlete_id)
+          : [athleteId];
+
+        for (const memberId of teamMembers) {
+          const entry = ensure(memberId);
+          if (p === 3) entry.gold++;
+          else if (p === 2) entry.silver++;
+          else entry.bronze++;
+        }
+      }
+    });
+  }
+
+  const result: AthletePoints[] = [];
+  pointsMap.forEach((pts, id) => {
+    const profile = profileMap.get(id);
+    result.push({
+      id,
+      display_name: profile?.display_name ?? 'Unknown',
+      avatar_url: profile?.avatar_url ?? null,
+      gold: pts.gold,
+      silver: pts.silver,
+      bronze: pts.bronze,
+      total: pts.gold * 3 + pts.silver * 2 + pts.bronze,
+    });
+  });
+
+  return result.sort((a, b) => {
+    if (b.total !== a.total) return b.total - a.total;
     if (b.gold !== a.gold) return b.gold - a.gold;
     if (b.silver !== a.silver) return b.silver - a.silver;
     if (b.bronze !== a.bronze) return b.bronze - a.bronze;
@@ -117,128 +176,127 @@ function computeLeaderboard(scores: ScoreRow[]): MonthlyAgg[] {
   });
 }
 
-export default function MonthlyLeaderboardPage() {
+// ── Component ──────────────────────────────────────────────────────────────────
+
+export default function MonthlyPage() {
   const router = useRouter();
-  const [leaderboard, setLeaderboard] = useState<MonthlyAgg[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const todayStr = todayInTZ();
+  const [year, setYear] = useState(() => parseInt(todayStr.slice(0, 4)));
+  const [month, setMonth] = useState(() => parseInt(todayStr.slice(5, 7)));
+  const [meId, setMeId] = useState<string | null>(null);
+  const [rows, setRows] = useState<AthletePoints[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    async function load() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+  const loadMonth = useCallback(async (y: number, m: number) => {
+    setLoading(true);
 
-      if (!user) {
-        router.replace('/login');
-        return;
-      }
+    const { data: authData } = await supabase.auth.getUser();
+    if (!authData.user) { router.replace('/login'); return; }
+    setMeId(authData.user.id);
 
-      const { startYmd, endYmd } = getMonthRangeUtc();
+    const from = `${y}-${String(m).padStart(2, '0')}-01`;
+    const lastDay = new Date(y, m, 0).getDate();
+    const to = `${y}-${String(m).padStart(2, '0')}-${lastDay}`;
 
-      const { data: rows, error: fetchError } = await supabase
-        .from('scores')
-        .select(
-          `
-          athlete_id,
-          wod_date,
-          time_input,
-          amrap_input,
-          profiles:athlete_id ( display_name )
-        `
-        )
-        .gte('wod_date', startYmd)
-        .lt('wod_date', endYmd);
+    const [wodsRes, scoresRes, profilesRes] = await Promise.all([
+      supabase.from('wods').select('wod_date, wod_text, workout_type_override').gte('wod_date', from).lte('wod_date', to),
+      supabase.from('scores').select('id, wod_date, athlete_id, time_seconds, time_input, amrap_rounds, amrap_reps, amrap_input, is_rx, team_id').gte('wod_date', from).lte('wod_date', to),
+      supabase.from('profiles').select('id, display_name, avatar_url'),
+    ]);
 
-      if (fetchError) {
-        setError(fetchError.message);
-        setLoading(false);
-        return;
-      }
+    const wods = (wodsRes.data ?? []) as WodRaw[];
+    const scores = (scoresRes.data ?? []) as ScoreRaw[];
+    const profiles = (profilesRes.data ?? []) as Profile[];
 
-      setLeaderboard(computeLeaderboard((rows ?? []) as unknown as ScoreRow[]));
-      setLoading(false);
-    }
-
-    load();
+    setRows(computePoints(wods, scores, profiles));
+    setLoading(false);
   }, [router]);
 
-  const monthLabel = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  useEffect(() => { loadMonth(year, month); }, [year, month, loadMonth]);
 
-  if (loading) {
-    return (
-      <main className="mx-auto min-h-screen w-full max-w-4xl px-6 py-12 text-slate-100">
-        <p className="text-sm text-slate-400">Loading...</p>
-      </main>
-    );
-  }
+  const prevMonth = () => {
+    if (month === 1) { setYear((y) => y - 1); setMonth(12); }
+    else setMonth((m) => m - 1);
+  };
+  const nextMonth = () => {
+    const nextIsAfterToday = (year === parseInt(todayStr.slice(0, 4)) && month >= parseInt(todayStr.slice(5, 7)));
+    if (nextIsAfterToday) return;
+    if (month === 12) { setYear((y) => y + 1); setMonth(1); }
+    else setMonth((m) => m + 1);
+  };
 
-  if (error) {
-    return (
-      <main className="mx-auto min-h-screen w-full max-w-4xl px-6 py-12 text-slate-100">
-        <h1 className="text-2xl font-semibold">Monthly Leaderboard</h1>
-        <p className="mt-4 text-sm text-red-300">Error loading scores: {error}</p>
-      </main>
-    );
-  }
+  const monthLabel = new Date(year, month - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const atMax = year === parseInt(todayStr.slice(0, 4)) && month >= parseInt(todayStr.slice(5, 7));
 
   return (
-    <main className="mx-auto min-h-screen w-full max-w-4xl px-6 py-12 pb-24 text-slate-100">
-      <div className="flex items-end justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Monthly Leaderboard</h1>
-          <p className="mt-1 text-sm text-slate-300">{monthLabel} • Points: 3 / 2 / 1</p>
-        </div>
-        <a
-          href="/"
-          className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-200 hover:bg-white/10"
-        >
-          Back to Daily
-        </a>
+    <main className="mx-auto flex min-h-screen w-full max-w-lg flex-col gap-5 bg-black px-4 py-10 pb-28 text-slate-100">
+
+      {/* Month nav */}
+      <div className="flex items-center justify-between">
+        <button onClick={prevMonth} className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 text-slate-400 hover:text-white">‹</button>
+        <p className="text-sm font-semibold text-white">{monthLabel}</p>
+        <button onClick={nextMonth} disabled={atMax} className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 text-slate-400 hover:text-white disabled:opacity-30">›</button>
       </div>
 
-      <div className="mt-8 overflow-hidden rounded-2xl border border-white/10">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-white/5 text-slate-200">
-            <tr>
-              <th className="px-4 py-3">Rank</th>
-              <th className="px-4 py-3">Athlete</th>
-              <th className="px-4 py-3 text-center">🥇</th>
-              <th className="px-4 py-3 text-center">🥈</th>
-              <th className="px-4 py-3 text-center">🥉</th>
-              <th className="px-4 py-3 text-right">Points</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-white/10">
-            {leaderboard.length === 0 ? (
+      {/* Points key */}
+      <div className="flex justify-center gap-4 text-xs text-slate-500">
+        <span>🥇 = 3 pts</span>
+        <span>🥈 = 2 pts</span>
+        <span>🥉 = 1 pt</span>
+      </div>
+
+      {loading ? (
+        <div className="flex flex-1 items-center justify-center py-20">
+          <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+        </div>
+      ) : rows.length === 0 ? (
+        <div className="rounded-2xl border border-white/10 bg-[#0a0f1e] px-6 py-10 text-center text-sm text-slate-500">
+          No scores yet this month.
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-2xl border border-white/10">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-white/5 text-xs text-slate-500">
               <tr>
-                <td className="px-4 py-6 text-slate-300" colSpan={6}>
-                  No scores this month yet. Be the first to suffer.
-                </td>
+                <th className="px-4 py-2.5">#</th>
+                <th className="px-4 py-2.5">Athlete</th>
+                <th className="px-3 py-2.5 text-center">🥇</th>
+                <th className="px-3 py-2.5 text-center">🥈</th>
+                <th className="px-3 py-2.5 text-center">🥉</th>
+                <th className="px-4 py-2.5 text-right">Pts</th>
               </tr>
-            ) : (
-              leaderboard.map((row, idx) => (
-                <tr key={row.athlete_id} className="hover:bg-white/5">
-                  <td className="px-4 py-3 text-slate-300">{idx + 1}</td>
-                  <td className="px-4 py-3 font-medium">{row.display_name}</td>
-                  <td className="px-4 py-3 text-center">{row.gold > 0 ? row.gold : '-'}</td>
-                  <td className="px-4 py-3 text-center">{row.silver > 0 ? row.silver : '-'}</td>
-                  <td className="px-4 py-3 text-center">{row.bronze > 0 ? row.bronze : '-'}</td>
-                  <td className="px-4 py-3 text-right font-semibold">{row.points}</td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="fixed bottom-0 left-0 right-0 border-t border-white/10 bg-black/80 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-around px-6 py-3">
-          <a href="/" className="text-sm font-medium text-slate-300">Home</a>
-          <a href="/monthly" className="text-sm font-semibold text-white">Monthly</a>
-          <a href="/admin" className="text-sm font-medium text-slate-300">Post WOD</a>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              {rows.map((r, idx) => {
+                const isMe = r.id === meId;
+                return (
+                  <tr key={r.id} className={isMe ? 'bg-white/10' : 'hover:bg-white/5'}>
+                    <td className="w-10 px-4 py-3 text-slate-500 text-xs">{idx + 1}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2.5">
+                        {r.avatar_url ? (
+                          <img src={r.avatar_url} alt="" className="h-7 w-7 rounded-full object-cover" />
+                        ) : (
+                          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-xs font-bold">
+                            {(r.display_name ?? '?')[0]?.toUpperCase()}
+                          </div>
+                        )}
+                        <span className={`font-medium ${isMe ? 'text-white' : 'text-slate-200'}`}>{r.display_name}</span>
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 text-center text-sm">{r.gold || '—'}</td>
+                    <td className="px-3 py-3 text-center text-sm">{r.silver || '—'}</td>
+                    <td className="px-3 py-3 text-center text-sm">{r.bronze || '—'}</td>
+                    <td className="px-4 py-3 text-right font-bold text-white">{r.total}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
-      </div>
+      )}
+
+      <BottomNav />
     </main>
   );
 }
