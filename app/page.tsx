@@ -374,7 +374,7 @@ mapped.sort((a, b) => {
           href="/"
           className="text-sm font-semibold text-white"
         >
-          Daily
+          Home
         </a>
         <a
           href="/monthly"
