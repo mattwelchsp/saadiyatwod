@@ -63,7 +63,16 @@ export default function HomePage() {
   const [selectedAthleteId, setSelectedAthleteId] = useState<string | null>(null);
 
   const [score, setScore] = useState('');
-  const [scores, setScores] = useState<string[]>([]);
+  const [scores, setScores] = useState<
+    Array<{
+      id: string;
+      athlete_id: string;
+      time_input: string | null;
+      amrap_input: string | null;
+      created_at: string;
+      athlete_display_name: string | null;
+    }>
+  >([]);
 
   useEffect(() => {
     async function loadMeAndMembers() {
@@ -97,6 +106,45 @@ export default function HomePage() {
       } else {
         console.error('Error loading members:', membersError);
       }
+
+      // Load latest WOD date (for now) and fetch leaderboard scores from DB
+      const { data: latestWod, error: latestWodErr } = await supabase
+        .from('wods')
+        .select('wod_date')
+        .order('wod_date', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (latestWodErr || !latestWod?.wod_date) {
+        console.error('Error loading latest WOD date for leaderboard:', latestWodErr);
+        return;
+      }
+
+      const { data: scoreRows, error: scoreErr } = await supabase
+        .from('scores')
+        .select('id, athlete_id, time_input, amrap_input, created_at')
+        .eq('wod_date', latestWod.wod_date)
+        .order('created_at', { ascending: true });
+
+      if (scoreErr) {
+        console.error('Error loading scores:', scoreErr);
+        return;
+      }
+
+      // Map athlete_id -> display_name using the members list we just loaded
+      const nameById = new Map<string, string | null>();
+      (allMembers ?? []).forEach((m: any) => nameById.set(m.id, m.display_name ?? null));
+
+      setScores(
+        (scoreRows ?? []).map((r: any) => ({
+          id: r.id,
+          athlete_id: r.athlete_id,
+          time_input: r.time_input ?? null,
+          amrap_input: r.amrap_input ?? null,
+          created_at: r.created_at,
+          athlete_display_name: nameById.get(r.athlete_id) ?? null,
+        }))
+      );
     }
 
     loadMeAndMembers();
@@ -107,24 +155,24 @@ export default function HomePage() {
     if (!selectedAthleteId) return;
     if (!meId) return;
 
-const { data: latestWod, error: wodErr } = await supabase
-  .from('wods')
-  .select('wod_date')
-  .order('wod_date', { ascending: false })
-  .limit(1)
-  .single();
+    const { data: latestWod, error: wodErr } = await supabase
+      .from('wods')
+      .select('wod_date')
+      .order('wod_date', { ascending: false })
+      .limit(1)
+      .single();
 
-if (wodErr || !latestWod?.wod_date) {
-  console.error('Error loading latest WOD date:', wodErr);
-  alert('No WOD found to attach this score to. Import/create today’s WOD first.');
-  return;
-}
+    if (wodErr || !latestWod?.wod_date) {
+      console.error('Error loading latest WOD date:', wodErr);
+      alert('No WOD found to attach this score to. Import/create today’s WOD first.');
+      return;
+    }
 
-const wodDate = latestWod.wod_date;
+    const wodDate = latestWod.wod_date;
 
     const { error } = await supabase.from('scores').insert({
       athlete_id: selectedAthleteId,
-      entered_by: meId,   // REQUIRED by your schema
+      entered_by: meId, // REQUIRED by your schema
       submitted_by: meId, // keep for compatibility if it exists
       wod_date: wodDate,
       is_rx: true,
@@ -142,7 +190,19 @@ const wodDate = latestWod.wod_date;
     const athleteLabel =
       selectedAthleteId === meId ? 'Me' : athlete?.display_name || selectedAthleteId.slice(0, 8);
 
-    setScores((prev) => [`${score} (${athleteLabel})`, ...prev]);
+    // Optimistic update
+    setScores((prev) => [
+      {
+        id: crypto.randomUUID(),
+        athlete_id: selectedAthleteId,
+        time_input: score,
+        amrap_input: null,
+        created_at: new Date().toISOString(),
+        athlete_display_name: selectedAthleteId === meId ? 'Me' : athleteLabel,
+      },
+      ...prev,
+    ]);
+
     setScore('');
   };
 
@@ -153,9 +213,7 @@ const wodDate = latestWod.wod_date;
     <main className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-8 px-6 py-12 lg:px-10">
       <div className="absolute right-6 top-6 flex items-center gap-3">
         <div className="h-10 w-10 rounded-full border border-white/10 bg-white/10" />
-        <div className="text-sm font-medium text-slate-200">
-          {displayName ?? fallbackName}
-        </div>
+        <div className="text-sm font-medium text-slate-200">{displayName ?? fallbackName}</div>
       </div>
 
       <section className="card p-8 md:p-10">
@@ -170,7 +228,7 @@ const wodDate = latestWod.wod_date;
           <select
             value={selectedAthleteId ?? ''}
             onChange={(e) => setSelectedAthleteId(e.target.value)}
-            className="w-full rounded-lg bg-slate-900 p-3 text-white border border-white/10"
+            className="w-full rounded-lg border border-white/10 bg-slate-900 p-3 text-white"
           >
             {meId ? <option value={meId}>Me</option> : <option value="">Me</option>}
             {otherMembers.length > 0 && <option disabled>──────────</option>}
@@ -203,9 +261,12 @@ const wodDate = latestWod.wod_date;
           <p className="text-slate-400">Be the first to suffer.</p>
         ) : (
           <ul className="space-y-2">
-            {scores.map((s, i) => (
-              <li key={i} className="rounded-lg bg-slate-900 p-3">
-                {s}
+            {scores.map((s) => (
+              <li key={s.id} className="rounded-lg bg-slate-900 p-3 text-slate-200">
+                {(s.time_input ?? s.amrap_input ?? '—')}{' '}
+                <span className="text-slate-400">
+                  ({s.athlete_display_name ?? s.athlete_id.slice(0, 8)})
+                </span>
               </li>
             ))}
           </ul>
