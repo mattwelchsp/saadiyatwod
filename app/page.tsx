@@ -135,6 +135,8 @@ export default function HomePage() {
       const nameById = new Map<string, string | null>();
       (allMembers ?? []).forEach((m: any) => nameById.set(m.id, m.display_name ?? null));
 
+            console.log('Loaded scores from DB:', scoreRows);
+
       setScores(
         (scoreRows ?? []).map((r: any) => ({
           id: r.id,
