@@ -11,9 +11,39 @@ permissions:
 jobs:
   codex-review:
     runs-on: ubuntu-latest
+    continue-on-error: true
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: openai/codex-action@v1
+      - name: Preflight checks
+        id: preflight
+        shell: bash
+        run: |
+          SHOULD_RUN=true
+
+          # Skip on fork PRs (secrets not available)
+          if [[ "${{ github.event.pull_request.head.repo.fork }}" == "true" ]]; then
+            SHOULD_RUN=false
+          fi
+
+          # Skip if OPENAI_API_KEY is missing/empty
+          if [[ -z "${{ secrets.OPENAI_API_KEY }}" ]]; then
+            SHOULD_RUN=false
+          fi
+
+          echo "should_run=$SHOULD_RUN" >> "$GITHUB_OUTPUT"
+
+      - name: Codex review skipped
+        if: steps.preflight.outputs.should_run != 'true'
+        run: |
+          echo "Skipping Codex review (missing OPENAI_API_KEY and/or fork PR context)."
+
+      - name: Checkout
+        if: steps.preflight.outputs.should_run == 'true'
+        uses: actions/checkout@v4
+
+      - name: Run Codex review
+        if: steps.preflight.outputs.should_run == 'true'
+        uses: openai/codex-action@v1
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
