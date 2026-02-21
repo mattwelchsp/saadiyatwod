@@ -9,8 +9,6 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
-// ── Types ──────────────────────────────────────────────────────────────────────
-
 type ScoreRow = {
   athlete_id: string;
   wod_date: string;
@@ -27,8 +25,6 @@ type MonthlyAgg = {
   bronze: number;
   points: number;
 };
-
-// ── Helpers ────────────────────────────────────────────────────────────────────
 
 function getMonthRangeUtc(date = new Date()) {
   const year = date.getUTCFullYear();
@@ -121,8 +117,6 @@ function computeLeaderboard(scores: ScoreRow[]): MonthlyAgg[] {
   });
 }
 
-// ── Component ──────────────────────────────────────────────────────────────────
-
 export default function MonthlyLeaderboardPage() {
   const router = useRouter();
   const [leaderboard, setLeaderboard] = useState<MonthlyAgg[]>([]);
@@ -174,7 +168,7 @@ export default function MonthlyLeaderboardPage() {
   if (loading) {
     return (
       <main className="mx-auto min-h-screen w-full max-w-4xl px-6 py-12 text-slate-100">
-        <p className="text-sm text-slate-400">Loading…</p>
+        <p className="text-sm text-slate-400">Loading...</p>
       </main>
     );
   }
@@ -199,7 +193,7 @@ export default function MonthlyLeaderboardPage() {
           href="/"
           className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-200 hover:bg-white/10"
         >
-          ← Back to Daily
+          Back to Daily
         </a>
       </div>
 
@@ -227,9 +221,9 @@ export default function MonthlyLeaderboardPage() {
                 <tr key={row.athlete_id} className="hover:bg-white/5">
                   <td className="px-4 py-3 text-slate-300">{idx + 1}</td>
                   <td className="px-4 py-3 font-medium">{row.display_name}</td>
-                  <td className="px-4 py-3 text-center">{row.gold || '—'}</td>
-                  <td className="px-4 py-3 text-center">{row.silver || '—'}</td>
-                  <td className="px-4 py-3 text-center">{row.bronze || '—'}</td>
+                  <td className="px-4 py-3 text-center">{row.gold > 0 ? row.gold : '-'}</td>
+                  <td className="px-4 py-3 text-center">{row.silver > 0 ? row.silver : '-'}</td>
+                  <td className="px-4 py-3 text-center">{row.bronze > 0 ? row.bronze : '-'}</td>
                   <td className="px-4 py-3 text-right font-semibold">{row.points}</td>
                 </tr>
               ))
@@ -238,7 +232,6 @@ export default function MonthlyLeaderboardPage() {
         </table>
       </div>
 
-      {/* Bottom Nav */}
       <div className="fixed bottom-0 left-0 right-0 border-t border-white/10 bg-black/80 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-around px-6 py-3">
           <a href="/" className="text-sm font-medium text-slate-300">
