@@ -66,6 +66,7 @@ create table if not exists public.scores (
   wod_date     date not null references public.wods (wod_date) on delete cascade,
   athlete_id   uuid not null references public.profiles (id) on delete cascade,
   entered_by   uuid not null references public.profiles (id) on delete cascade,
+  submitted_by uuid not null references public.profiles (id) on delete cascade,
   time_input   text,
   amrap_input  text,
   is_rx        boolean not null default true,
