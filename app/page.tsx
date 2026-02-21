@@ -124,7 +124,7 @@ export default function HomePage() {
         .from('scores')
         .select('id, athlete_id, time_input, amrap_input, created_at')
         .eq('wod_date', latestWod.wod_date)
-        .order('created_at', { ascending: true });
+        .order('created_at', { ascending: false });
 
       if (scoreErr) {
         console.error('Error loading scores:', scoreErr);
