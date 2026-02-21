@@ -104,17 +104,35 @@ export default function HomePage() {
     loadMeAndMembers();
   }, []);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!score) return;
     if (!selectedAthleteId) return;
+    if (!meId) return;
+
+    // NOTE: your current scores table schema does NOT have athlete_id yet.
+    // For now we store who entered it (submitted_by) + the score input fields.
+    // We will upgrade the schema next so "submit for someone else" is stored correctly.
+    const today = new Date().toISOString().split('T')[0];
+
+    const { error } = await supabase.from('scores').insert({
+      submitted_by: meId,
+      wod_date: today,
+      is_rx: true,
+      is_team: false,
+      time_input: score, // TEMP: treat everything as TIME for now
+    });
+
+    if (error) {
+      console.error('Error inserting score:', error);
+      alert(`Error saving score: ${error.message}`);
+      return;
+    }
 
     const athlete = members.find((m) => m.id === selectedAthleteId);
     const athleteLabel =
-      selectedAthleteId === meId
-        ? 'Me'
-        : athlete?.display_name || 'Someone else';
+      selectedAthleteId === meId ? 'Me' : athlete?.display_name || selectedAthleteId.slice(0, 8);
 
-    // TEMP: still local-only; next steps will write to Supabase scores with athlete_id + entered_by
+    // TEMP local display so you see it immediately
     setScores((prev) => [`${score} (${athleteLabel})`, ...prev]);
     setScore('');
   };
