@@ -187,6 +187,7 @@ export default function HomePage() {
     const insertPayload: any = {
       athlete_id: selectedAthleteId,
       entered_by: meId,
+      submitted_by: meId,
       wod_date: wodDate,
       is_rx: true,
       is_team: false,
