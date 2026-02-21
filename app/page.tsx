@@ -262,8 +262,8 @@ export default function HomePage() {
         {scores.length === 0 ? (
           <p className="text-slate-400">Be the first to suffer.</p>
         ) : (
-          <ul className="space-y-2">
-            {scores.map((s) => (
+                   <ul className="space-y-2">
+            {scores.slice(0, 3).map((s) => (
               <li key={s.id} className="rounded-lg bg-slate-900 p-3 text-slate-200">
                 {(s.time_input ?? s.amrap_input ?? '—')}{' '}
                 <span className="text-slate-400">
