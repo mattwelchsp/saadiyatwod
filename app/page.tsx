@@ -1,14 +1,54 @@
 'use client';
 
-import { useEffect, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
+import { useEffect, useState } from 'react';
+import { createClient } from '@supabase/supabase-js';
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
+
+type WodBlock = {
+  title: string;
+  items: string[];
+};
+
+type TodaysWod = {
+  day: string;
+  focus: string;
+  blocks: WodBlock[];
+};
+
+const todaysWod: TodaysWod = {
+  day: 'Today',
+  focus: 'Post the WOD here (exact text as posted).',
+  blocks: [
+    { title: 'Warm-up', items: [''] },
+    { title: 'Strength', items: [''] },
+    { title: 'Conditioning', items: [''] },
+  ],
+};
+
+function SectionCard({ block }: { block: WodBlock }) {
+  return (
+    <section className="card p-6">
+      <h3 className="text-base font-semibold text-white">{block.title}</h3>
+      {block.items?.length ? (
+        <ul className="mt-3 space-y-2">
+          {block.items.map((item, idx) => (
+            <li key={idx} className="rounded-lg bg-slate-900 p-3 text-slate-200">
+              {item || <span className="text-slate-500">—</span>}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-3 text-slate-400">—</p>
+      )}
+    </section>
+  );
+}
 
 export default function HomePage() {
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
-
   const [displayName, setDisplayName] = useState<string | null>(null);
   const [avatarPath, setAvatarPath] = useState<string | null>(null);
   const [email, setEmail] = useState<string | null>(null);
@@ -20,16 +60,16 @@ export default function HomePage() {
     async function loadMe() {
       const { data } = await supabase.auth.getUser();
       const user = data.user;
-      console.log("USER:", user);
+      console.log('USER:', user);
 
       if (!user) return;
 
       setEmail(user.email ?? null);
 
       const { data: profile, error } = await supabase
-        .from("profiles")
-        .select("display_name, avatar_path")
-        .eq("id", user.id)
+        .from('profiles')
+        .select('display_name, avatar_path')
+        .eq('id', user.id)
         .single();
 
       if (!error && profile) {
@@ -43,22 +83,17 @@ export default function HomePage() {
 
   const handleSubmit = () => {
     if (!score) return;
-    setScores([score, ...scores]);
+    setScores((prev) => [score, ...prev]);
     setScore('');
   };
 
-  // Fallback name if profile not set yet
-  const fallbackName = email ? email.split("@")[0] : "";
+  const fallbackName = email ? email.split('@')[0] : '';
 
   return (
     <main className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-8 px-6 py-12 lg:px-10">
-      {/* Top-right "Me" badge (minimal) */}
       <div className="absolute right-6 top-6 flex items-center gap-3">
-        {/* Placeholder avatar for now; we'll wire real avatar URLs on the Profile page step */}
         <div className="h-10 w-10 rounded-full border border-white/10 bg-white/10" />
-        <div className="text-sm font-medium text-slate-200">
-          {displayName ?? fallbackName}
-        </div>
+        <div className="text-sm font-medium text-slate-200">{displayName ?? fallbackName}</div>
       </div>
 
       <section className="card p-8 md:p-10">
@@ -85,13 +120,13 @@ export default function HomePage() {
       </section>
 
       <section className="card p-6">
-        <h2 className="text-xl font-semibold mb-4">Leaderboard</h2>
+        <h2 className="mb-4 text-xl font-semibold">Leaderboard</h2>
         {scores.length === 0 ? (
           <p className="text-slate-400">Be the first to suffer.</p>
         ) : (
           <ul className="space-y-2">
             {scores.map((s, i) => (
-              <li key={i} className="bg-slate-900 p-3 rounded-lg">
+              <li key={i} className="rounded-lg bg-slate-900 p-3">
                 {s}
               </li>
             ))}
