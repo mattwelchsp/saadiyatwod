@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { detectWorkoutTypeFromWodText } from '../lib/wodType';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -225,6 +226,7 @@ export default function HomePage() {
 
   const fallbackName = email ? email.split('@')[0] : '';
   const otherMembers = members.filter((m) => m.id !== meId);
+  const workoutType = detectWorkoutTypeFromWodText(wodText);
 
   return (
     <main className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-8 px-6 py-12 lg:px-10">
