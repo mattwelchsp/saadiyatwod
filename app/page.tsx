@@ -384,18 +384,26 @@ mapped.sort((a, b) => {
           </select>
 
           <input
-            value={score}
-            onChange={(e) => setScore(e.target.value)}
-            placeholder="Enter your score (e.g. 5+12 or 12:34)"
-            className="mt-3 w-full rounded-lg bg-slate-900 p-3 text-white"
-          />
+  value={score}
+  onChange={(e) => setScore(e.target.value)}
+  placeholder="Enter your score (e.g. 5+12 or 12:34)"
+  disabled={workoutType === 'NO_SCORE'}
+  className={`mt-3 w-full rounded-lg p-3 text-white ${
+    workoutType === 'NO_SCORE' ? 'bg-slate-800 opacity-50 cursor-not-allowed' : 'bg-slate-900'
+  }`}
+/>
 
           <button
-            onClick={handleSubmit}
-            className="mt-3 w-full rounded-lg bg-brand-500 py-3 font-semibold"
-          >
-            Submit Score
-          </button>
+  onClick={handleSubmit}
+  disabled={workoutType === 'NO_SCORE'}
+  className={`mt-3 w-full rounded-lg py-3 font-semibold ${
+    workoutType === 'NO_SCORE'
+      ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
+      : 'bg-brand-500'
+  }`}
+>
+  Submit Score
+</button>
         </div>
       </section>
 
