@@ -217,60 +217,135 @@ mapped.sort((a, b) => {
   }, []);
 
   const handleSubmit = async () => {
-    if (!score) return;
-    if (!selectedAthleteId) return;
-    if (!meId) return;
+  if (!score) return;
+  if (!selectedAthleteId) return;
+  if (!meId) return;
 
-    const { data: latestWod, error: wodErr } = await supabase
-      .from('wods')
-.select('wod_date, wod_text')
-      .order('wod_date', { ascending: false })
-      .limit(1)
-      .single();
+  const { data: latestWod, error: wodErr } = await supabase
+    .from('wods')
+    .select('wod_date')
+    .order('wod_date', { ascending: false })
+    .limit(1)
+    .single();
 
-    if (wodErr || !latestWod?.wod_date) {
-      console.error('Error loading latest WOD date:', wodErr);
-      alert('No WOD found to attach this score to. Import/create today’s WOD first.');
-      return;
-    }
+  if (wodErr || !latestWod?.wod_date) {
+    console.error('Error loading latest WOD date:', wodErr);
+    alert('No WOD found to attach this score to. Import/create today’s WOD first.');
+    return;
+  }
 
-    const wodDate = latestWod.wod_date;
+  const wodDate = latestWod.wod_date;
 
-    const { error } = await supabase.from('scores').insert({
-      athlete_id: selectedAthleteId,
-      entered_by: meId, // REQUIRED by your schema
-      submitted_by: meId, // keep for compatibility if it exists
-      wod_date: wodDate,
-      is_rx: true,
-      is_team: false,
-      time_input: score,
-    });
-
-    if (error) {
-      console.error('Error inserting score:', error);
-      alert(`Error saving score: ${error.message}`);
-      return;
-    }
-
-    const athlete = members.find((m) => m.id === selectedAthleteId);
-    const athleteLabel =
-      selectedAthleteId === meId ? 'Me' : athlete?.display_name || selectedAthleteId.slice(0, 8);
-
-    // Optimistic update
-    setScores((prev) => [
-      {
-        id: crypto.randomUUID(),
-        athlete_id: selectedAthleteId,
-        time_input: score,
-        amrap_input: null,
-        created_at: new Date().toISOString(),
-        athlete_display_name: selectedAthleteId === meId ? 'Me' : athleteLabel,
-      },
-      ...prev,
-    ]);
-
-    setScore('');
+  const insertPayload: any = {
+    athlete_id: selectedAthleteId,
+    entered_by: meId, // REQUIRED by your schema
+    submitted_by: meId, // keep for compatibility if it exists
+    wod_date: wodDate,
+    is_rx: true,
+    is_team: false,
+    time_input: null,
+    amrap_input: null,
   };
+
+  if (workoutType === 'TIME') {
+    insertPayload.time_input = score;
+  } else if (workoutType === 'AMRAP') {
+    insertPayload.amrap_input = score;
+  } else {
+    alert('This workout does not accept scores (or type is unknown).');
+    return;
+  }
+
+  const { error } = await supabase.from('scores').insert(insertPayload);
+
+  if (error) {
+    console.error('Error inserting score:', error);
+    alert(`Error saving score: ${error.message}`);
+    return;
+  }
+
+  // Clear input
+  setScore('');
+
+  // Reload leaderboard from DB for this WOD date
+  const { data: scoreRows, error: scoreErr } = await supabase
+    .from('scores')
+    .select('id, athlete_id, time_input, amrap_input, created_at')
+    .eq('wod_date', wodDate)
+    .order('created_at', { ascending: false });
+
+  if (scoreErr) {
+    console.error('Error loading scores after submit:', scoreErr);
+    return;
+  }
+
+  // Map athlete_id -> display_name using the members list already loaded
+  const nameById = new Map<string, string | null>();
+  members.forEach((m: any) => nameById.set(m.id, m.display_name ?? null));
+
+  const mapped = (scoreRows ?? []).map((r: any) => ({
+    id: r.id,
+    athlete_id: r.athlete_id,
+    time_input: r.time_input ?? null,
+    amrap_input: r.amrap_input ?? null,
+    created_at: r.created_at,
+    athlete_display_name: nameById.get(r.athlete_id) ?? null,
+  }));
+
+  // Sort based on detected workout type (same logic as initial load)
+  mapped.sort((a, b) => {
+    if (workoutType === 'TIME') {
+      if (!a.time_input && !b.time_input) return 0;
+      if (!a.time_input) return 1;
+      if (!b.time_input) return -1;
+
+      const toSeconds = (t: string) => {
+        const parts = t.split(':').map((p) => Number(p));
+        if (parts.length !== 2 || parts.some((n) => Number.isNaN(n))) return Number.POSITIVE_INFINITY;
+        const [m, s] = parts;
+        return m * 60 + s;
+      };
+
+      return toSeconds(a.time_input) - toSeconds(b.time_input);
+    }
+
+    if (workoutType === 'AMRAP') {
+      const parseAmrap = (v: string | null) => {
+        if (!v) return { rounds: -1, reps: -1, total: -1 };
+
+        const s = v.trim();
+        const plusMatch = /^(\d+)\s*\+\s*(\d+)$/.exec(s);
+        if (plusMatch) {
+          const rounds = Number(plusMatch[1]);
+          const reps = Number(plusMatch[2]);
+          if (Number.isNaN(rounds) || Number.isNaN(reps)) return { rounds: -1, reps: -1, total: -1 };
+          return { rounds, reps, total: rounds * 1000 + reps };
+        }
+
+        const num = Number(s);
+        if (!Number.isNaN(num)) return { rounds: 0, reps: num, total: num };
+
+        return { rounds: -1, reps: -1, total: -1 };
+      };
+
+      const aVal = parseAmrap(a.amrap_input);
+      const bVal = parseAmrap(b.amrap_input);
+
+      const aMissing = aVal.total < 0;
+      const bMissing = bVal.total < 0;
+      if (aMissing && bMissing) return 0;
+      if (aMissing) return 1;
+      if (bMissing) return -1;
+
+      if (aVal.rounds !== bVal.rounds) return bVal.rounds - aVal.rounds;
+      return bVal.reps - aVal.reps;
+    }
+
+    return 0;
+  });
+
+  setScores(mapped);
+};
 
   const fallbackName = email ? email.split('@')[0] : '';
   const otherMembers = members.filter((m) => m.id !== meId);
