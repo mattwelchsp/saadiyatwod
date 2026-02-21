@@ -420,8 +420,12 @@ mapped.sort((a, b) => {
         const name = s.athlete_display_name ?? s.athlete_id.slice(0, 8);
 
         return (
-          <li key={s.id} className="flex items-center justify-between rounded-lg bg-slate-900 p-3 text-slate-200">
-            <div className="flex items-center gap-3">
+<li
+  key={s.id}
+  className={`flex items-center justify-between rounded-lg p-3 text-slate-200 ${
+    s.athlete_id === meId ? 'bg-brand-500/20 ring-1 ring-brand-500/40' : 'bg-slate-900'
+  }`}
+>            <div className="flex items-center gap-3">
               <span className="text-lg">{medal}</span>
               <span className="font-medium">{name}</span>
             </div>
