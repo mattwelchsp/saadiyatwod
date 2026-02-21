@@ -234,12 +234,9 @@ export default function MonthlyLeaderboardPage() {
 
       <div className="fixed bottom-0 left-0 right-0 border-t border-white/10 bg-black/80 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-around px-6 py-3">
-          <a href="/" className="text-sm font-medium text-slate-300">
-            Home
-          </a>
-          <a href="/monthly" className="text-sm font-semibold text-white">
-            Monthly
-          </a>
+          <a href="/" className="text-sm font-medium text-slate-300">Home</a>
+          <a href="/monthly" className="text-sm font-semibold text-white">Monthly</a>
+          <a href="/admin" className="text-sm font-medium text-slate-300">Post WOD</a>
         </div>
       </div>
     </main>
