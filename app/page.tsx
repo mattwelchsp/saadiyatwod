@@ -151,16 +151,64 @@ export default function HomePage() {
       }));
 
       // Sort TIME workouts (lowest time = best)
-      mapped.sort((a, b) => {
-        if (!a.time_input || !b.time_input) return 0;
+      // Sort leaderboard based on detected workout type
+mapped.sort((a, b) => {
+  // TIME: lowest total seconds wins
+  if (workoutType === 'TIME') {
+    if (!a.time_input && !b.time_input) return 0;
+    if (!a.time_input) return 1;
+    if (!b.time_input) return -1;
 
-        const toSeconds = (t: string) => {
-          const [m, s] = t.split(':').map(Number);
-          return m * 60 + s;
-        };
+    const toSeconds = (t: string) => {
+      const parts = t.split(':').map((p) => Number(p));
+      if (parts.length !== 2 || parts.some((n) => Number.isNaN(n))) return Number.POSITIVE_INFINITY;
+      const [m, s] = parts;
+      return m * 60 + s;
+    };
 
-        return toSeconds(a.time_input) - toSeconds(b.time_input);
-      });
+    return toSeconds(a.time_input) - toSeconds(b.time_input);
+  }
+
+  // AMRAP: highest (rounds, then reps) wins; supports "5+12" and also plain "123"
+  if (workoutType === 'AMRAP') {
+    const parseAmrap = (v: string | null) => {
+      if (!v) return { rounds: -1, reps: -1, total: -1 };
+
+      const s = v.trim();
+      const plusMatch = /^(\d+)\s*\+\s*(\d+)$/.exec(s);
+      if (plusMatch) {
+        const rounds = Number(plusMatch[1]);
+        const reps = Number(plusMatch[2]);
+        if (Number.isNaN(rounds) || Number.isNaN(reps)) return { rounds: -1, reps: -1, total: -1 };
+        // total is only a fallback; rounds/reps are the real comparison
+        return { rounds, reps, total: rounds * 1000 + reps };
+      }
+
+      // If someone enters a plain number, treat as reps
+      const num = Number(s);
+      if (!Number.isNaN(num)) return { rounds: 0, reps: num, total: num };
+
+      return { rounds: -1, reps: -1, total: -1 };
+    };
+
+    const aVal = parseAmrap(a.amrap_input);
+    const bVal = parseAmrap(b.amrap_input);
+
+    // Missing values go to bottom
+    const aMissing = aVal.total < 0;
+    const bMissing = bVal.total < 0;
+    if (aMissing && bMissing) return 0;
+    if (aMissing) return 1;
+    if (bMissing) return -1;
+
+    // Higher rounds wins; if tied, higher reps wins
+    if (aVal.rounds !== bVal.rounds) return bVal.rounds - aVal.rounds;
+    return bVal.reps - aVal.reps;
+  }
+
+  // UNKNOWN / NO_SCORE: keep newest-first (created_at already ordered desc)
+  return 0;
+});
 
       setScores(mapped);
     }
