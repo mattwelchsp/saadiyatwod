@@ -1,0 +1,53 @@
+name: Enable Auto-merge
+
+on:
+  pull_request:
+    types: [opened, synchronize, labeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  enable-auto-merge:
+    if: >-
+      !github.event.pull_request.head.repo.fork &&
+      contains(github.event.pull_request.labels.*.name, 'automerge')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+
+            try {
+              await github.graphql(`
+                mutation EnableAutoMerge($pullRequestId: ID!) {
+                  enablePullRequestAutoMerge(input: { pullRequestId: $pullRequestId, mergeMethod: SQUASH }) {
+                    pullRequest { number }
+                  }
+                }
+              `, { pullRequestId: pr.node_id });
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body: '✅ Auto-merge enabled (squash) because this PR has the `automerge` label. GitHub will merge it after required checks pass.',
+              });
+            } catch (error) {
+              core.setFailed(`Failed to enable auto-merge: ${error.message}`);
+            }
+
+      - if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              body: '⚠️ Could not enable auto-merge. Check that repository setting **Allow auto-merge** is enabled and branch protection requires the `build` check.',
+            });
