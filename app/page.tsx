@@ -56,6 +56,9 @@ export default function HomePage() {
   const [score, setScore] = useState('');
   const [scores, setScores] = useState<string[]>([]);
 
+  // NEW: who the score is being submitted for (UI only for now)
+  const [submitFor, setSubmitFor] = useState<'me' | 'someone_else'>('me');
+
   useEffect(() => {
     async function loadMe() {
       const { data } = await supabase.auth.getUser();
@@ -83,7 +86,11 @@ export default function HomePage() {
 
   const handleSubmit = () => {
     if (!score) return;
-    setScores((prev) => [score, ...prev]);
+
+    // TEMP: show who it was submitted for in the local list.
+    const label = submitFor === 'me' ? 'Me' : 'Someone else';
+    setScores((prev) => [`${score} (${label})`, ...prev]);
+
     setScore('');
   };
 
@@ -104,11 +111,22 @@ export default function HomePage() {
         <p className="mt-3 max-w-2xl text-slate-200">{todaysWod.focus}</p>
 
         <div className="mt-6">
+          {/* NEW: Submit-on-behalf selector */}
+          <label className="mb-2 block text-sm text-white/70">Submit score for</label>
+          <select
+            value={submitFor}
+            onChange={(e) => setSubmitFor(e.target.value as 'me' | 'someone_else')}
+            className="w-full rounded-lg bg-slate-900 p-3 text-white border border-white/10"
+          >
+            <option value="me">Me</option>
+            <option value="someone_else">Someone else…</option>
+          </select>
+
           <input
             value={score}
             onChange={(e) => setScore(e.target.value)}
             placeholder="Enter your score (e.g. 5+12 or 12:34)"
-            className="w-full rounded-lg bg-slate-900 p-3 text-white"
+            className="mt-3 w-full rounded-lg bg-slate-900 p-3 text-white"
           />
           <button
             onClick={handleSubmit}
