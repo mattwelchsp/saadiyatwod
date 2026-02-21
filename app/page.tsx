@@ -367,8 +367,10 @@ mapped.sort((a, b) => {
   {wodText ?? todaysWod.focus}
 </p>        
 
-        <div className="mt-6">
-          <label className="mb-2 block text-sm text-white/70">Submit score for</label>
+<div className="mt-6">
+  {workoutType === 'NO_SCORE' ? (
+    <p className="text-slate-400">No score today. Show up, do the work, log nothing.</p>
+  ) : (          <label className="mb-2 block text-sm text-white/70">Submit score for</label>
           <select
             value={selectedAthleteId ?? ''}
             onChange={(e) => setSelectedAthleteId(e.target.value)}
@@ -404,7 +406,8 @@ mapped.sort((a, b) => {
 >
   Submit Score
 </button>
-        </div>
+                </div>
+      )}
       </section>
 
       <section className="card p-6">
