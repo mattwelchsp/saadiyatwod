@@ -107,13 +107,26 @@ export default function HomePage() {
     if (!selectedAthleteId) return;
     if (!meId) return;
 
-    const today = new Date().toISOString().split('T')[0];
+const { data: latestWod, error: wodErr } = await supabase
+  .from('wods')
+  .select('wod_date')
+  .order('wod_date', { ascending: false })
+  .limit(1)
+  .single();
+
+if (wodErr || !latestWod?.wod_date) {
+  console.error('Error loading latest WOD date:', wodErr);
+  alert('No WOD found to attach this score to. Import/create today’s WOD first.');
+  return;
+}
+
+const wodDate = latestWod.wod_date;
 
     const { error } = await supabase.from('scores').insert({
       athlete_id: selectedAthleteId,
       entered_by: meId,   // REQUIRED by your schema
       submitted_by: meId, // keep for compatibility if it exists
-      wod_date: today,
+      wod_date: wodDate,
       is_rx: true,
       is_team: false,
       time_input: score,
