@@ -76,7 +76,6 @@ export default function HomePage() {
       setSelectedAthleteId(user.id); // default = me
       setEmail(user.email ?? null);
 
-      // Load my profile header display name
       const { data: profile } = await supabase
         .from('profiles')
         .select('display_name, avatar_path')
@@ -88,7 +87,6 @@ export default function HomePage() {
         setAvatarPath(profile.avatar_path ?? null);
       }
 
-      // Load all gym members (for submit-on-behalf)
       const { data: allMembers, error: membersError } = await supabase
         .from('profiles')
         .select('id, display_name')
@@ -112,20 +110,12 @@ export default function HomePage() {
     const today = new Date().toISOString().split('T')[0];
 
     const { error } = await supabase.from('scores').insert({
-      // REQUIRED by your schema:
       athlete_id: selectedAthleteId,
-
-      // Who entered it (your schema uses submitted_by):
-      submitted_by: meId,
-
-      // Date key:
+      entered_by: meId,   // REQUIRED by your schema
+      submitted_by: meId, // keep for compatibility if it exists
       wod_date: today,
-
-      // Basic flags (keep as-is for now):
       is_rx: true,
       is_team: false,
-
-      // TEMP: treat input as TIME for now
       time_input: score,
     });
 
