@@ -109,17 +109,24 @@ export default function HomePage() {
     if (!selectedAthleteId) return;
     if (!meId) return;
 
-    // NOTE: your current scores table schema does NOT have athlete_id yet.
-    // For now we store who entered it (submitted_by) + the score input fields.
-    // We will upgrade the schema next so "submit for someone else" is stored correctly.
     const today = new Date().toISOString().split('T')[0];
 
     const { error } = await supabase.from('scores').insert({
+      // REQUIRED by your schema:
+      athlete_id: selectedAthleteId,
+
+      // Who entered it (your schema uses submitted_by):
       submitted_by: meId,
+
+      // Date key:
       wod_date: today,
+
+      // Basic flags (keep as-is for now):
       is_rx: true,
       is_team: false,
-      time_input: score, // TEMP: treat everything as TIME for now
+
+      // TEMP: treat input as TIME for now
+      time_input: score,
     });
 
     if (error) {
@@ -132,13 +139,11 @@ export default function HomePage() {
     const athleteLabel =
       selectedAthleteId === meId ? 'Me' : athlete?.display_name || selectedAthleteId.slice(0, 8);
 
-    // TEMP local display so you see it immediately
     setScores((prev) => [`${score} (${athleteLabel})`, ...prev]);
     setScore('');
   };
 
   const fallbackName = email ? email.split('@')[0] : '';
-
   const otherMembers = members.filter((m) => m.id !== meId);
 
   return (
@@ -158,17 +163,13 @@ export default function HomePage() {
         <p className="mt-3 max-w-2xl text-slate-200">{todaysWod.focus}</p>
 
         <div className="mt-6">
-          {/* Submit-on-behalf: real members list */}
           <label className="mb-2 block text-sm text-white/70">Submit score for</label>
           <select
             value={selectedAthleteId ?? ''}
             onChange={(e) => setSelectedAthleteId(e.target.value)}
             className="w-full rounded-lg bg-slate-900 p-3 text-white border border-white/10"
           >
-            {/* Me */}
             {meId ? <option value={meId}>Me</option> : <option value="">Me</option>}
-
-            {/* Others */}
             {otherMembers.length > 0 && <option disabled>──────────</option>}
             {otherMembers.map((m) => (
               <option key={m.id} value={m.id}>
