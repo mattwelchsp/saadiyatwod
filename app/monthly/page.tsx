@@ -1,6 +1,6 @@
 // app/monthly/page.tsx
 import { redirect } from "next/navigation";
-import { createClient } from "@/utils/supabase/server";
+import { createClient } from '@supabase/supabase-js';
 
 type ScoreRow = {
   athlete_id: string;
