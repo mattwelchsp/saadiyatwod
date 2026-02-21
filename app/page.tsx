@@ -241,6 +241,9 @@ export default function HomePage() {
           {todaysWod.day}&apos;s Workout
         </h1>
         <p className="mt-3 max-w-2xl text-slate-200">{todaysWod.focus}</p>
+        <p className="mt-2 text-sm text-slate-400">
+  Detected workout type: <span className="font-semibold text-slate-200">{workoutType}</span>
+</p>
 
         <div className="mt-6">
           <label className="mb-2 block text-sm text-white/70">Submit score for</label>
