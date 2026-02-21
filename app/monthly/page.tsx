@@ -77,8 +77,11 @@ type MonthlyAgg = {
 };
 
 export default async function MonthlyLeaderboardPage() {
-  const supabase = createClient();
+import { getSupabaseEnv } from "@/lib/env";
+import { createClient } from "@supabase/supabase-js";
 
+const { url, anonKey } = getSupabaseEnv();
+const supabase = createClient(url, anonKey);
   const {
     data: { user },
   } = await supabase.auth.getUser();
