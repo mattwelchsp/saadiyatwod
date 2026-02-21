@@ -44,3 +44,5 @@ The codebase is already written to this repository (committed in git history) an
 ## Notes for restricted environments
 
 If `npm install` fails due to registry/network policy errors (like `403`), the source code is still complete and can be pushed/committed. Run setup commands in an environment with registry access.
+
+test
