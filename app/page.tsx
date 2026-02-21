@@ -1,5 +1,6 @@
 'use client';
-
+import { useEffect } from "react";
+import { createClient } from "@supabase/supabase-js";
 import { useState } from 'react';
 import { SectionCard } from '@/components/section-card';
 import { todaysWod } from '@/data/wod';
@@ -11,6 +12,19 @@ const stats = [
 ];
 
 export default function HomePage() {
+  const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
+
+useEffect(() => {
+  async function checkUser() {
+    const { data } = await supabase.auth.getUser();
+    console.log("USER:", data.user);
+  }
+
+  checkUser();
+}, []);
   const [score, setScore] = useState('');
   const [scores, setScores] = useState<string[]>([]);
 
