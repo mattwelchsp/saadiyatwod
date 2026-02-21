@@ -13,6 +13,9 @@ export default function HomePage() {
   const [avatarPath, setAvatarPath] = useState<string | null>(null);
   const [email, setEmail] = useState<string | null>(null);
 
+  const [score, setScore] = useState('');
+  const [scores, setScores] = useState<string[]>([]);
+
   useEffect(() => {
     async function loadMe() {
       const { data } = await supabase.auth.getUser();
@@ -38,21 +41,26 @@ export default function HomePage() {
     loadMe();
   }, []);
 
-  return (
-
-  checkUser();
-}, []);
-  const [score, setScore] = useState('');
-  const [scores, setScores] = useState<string[]>([]);
-
   const handleSubmit = () => {
     if (!score) return;
     setScores([score, ...scores]);
     setScore('');
   };
 
+  // Fallback name if profile not set yet
+  const fallbackName = email ? email.split("@")[0] : "";
+
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-8 px-6 py-12 lg:px-10">
+    <main className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-8 px-6 py-12 lg:px-10">
+      {/* Top-right "Me" badge (minimal) */}
+      <div className="absolute right-6 top-6 flex items-center gap-3">
+        {/* Placeholder avatar for now; we'll wire real avatar URLs on the Profile page step */}
+        <div className="h-10 w-10 rounded-full border border-white/10 bg-white/10" />
+        <div className="text-sm font-medium text-slate-200">
+          {displayName ?? fallbackName}
+        </div>
+      </div>
+
       <section className="card p-8 md:p-10">
         <p className="text-sm uppercase tracking-[0.2em] text-brand-100">Saadiyat WOD</p>
         <h1 className="mt-3 text-3xl font-bold text-white md:text-5xl">
