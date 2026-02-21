@@ -1,49 +1,44 @@
 'use client';
+
 import { useEffect, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
-import { useState } from 'react';
-import { SectionCard } from '@/components/section-card';
-import { todaysWod } from '@/data/wod';
-
-const stats = [
-  { label: 'Estimated time', value: '45–55 min' },
-  { label: 'Intensity', value: 'Moderate / High' },
-  { label: 'Equipment', value: 'DB, Wall Ball, Pull-up bar' }
-];
 
 export default function HomePage() {
   const supabase = createClient(
-    const [displayName, setDisplayName] = useState<string | null>(null);
-const [avatarPath, setAvatarPath] = useState<string | null>(null);
-const [email, setEmail] = useState<string | null>(null);
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
 
-useEffect(() => {
-  async function loadMe() {
-    const { data } = await supabase.auth.getUser();
-    const user = data.user;
-    console.log("USER:", user);
+  const [displayName, setDisplayName] = useState<string | null>(null);
+  const [avatarPath, setAvatarPath] = useState<string | null>(null);
+  const [email, setEmail] = useState<string | null>(null);
 
-    if (!user) return;
+  useEffect(() => {
+    async function loadMe() {
+      const { data } = await supabase.auth.getUser();
+      const user = data.user;
+      console.log("USER:", user);
 
-    setEmail(user.email ?? null);
+      if (!user) return;
 
-    const { data: profile, error } = await supabase
-      .from("profiles")
-      .select("display_name, avatar_path")
-      .eq("id", user.id)
-      .single();
+      setEmail(user.email ?? null);
 
-    if (!error && profile) {
-      setDisplayName(profile.display_name ?? null);
-      setAvatarPath(profile.avatar_path ?? null);
+      const { data: profile, error } = await supabase
+        .from("profiles")
+        .select("display_name, avatar_path")
+        .eq("id", user.id)
+        .single();
+
+      if (!error && profile) {
+        setDisplayName(profile.display_name ?? null);
+        setAvatarPath(profile.avatar_path ?? null);
+      }
     }
-  }
 
-  loadMe();
-}, []);
+    loadMe();
+  }, []);
+
+  return (
 
   checkUser();
 }, []);
