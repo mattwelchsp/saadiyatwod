@@ -363,8 +363,9 @@ mapped.sort((a, b) => {
         <h1 className="mt-3 text-3xl font-bold text-white md:text-5xl">
           {todaysWod.day}&apos;s Workout
         </h1>
-        <p className="mt-3 max-w-2xl text-slate-200">{todaysWod.focus}</p>
-        
+<p className="mt-3 max-w-2xl whitespace-pre-wrap text-slate-200">
+  {wodText ?? todaysWod.focus}
+</p>        
 
         <div className="mt-6">
           <label className="mb-2 block text-sm text-white/70">Submit score for</label>
