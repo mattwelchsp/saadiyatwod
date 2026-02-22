@@ -4,7 +4,6 @@ import { usePathname } from 'next/navigation';
 
 const TABS = [
   { label: 'Home', href: '/' },
-  { label: 'Daily', href: '/leaderboard' },
   { label: 'Monthly', href: '/monthly' },
   { label: 'Me', href: '/me' },
 ];
@@ -42,14 +41,6 @@ function TabIcon({ name, active }: { name: string; active: boolean }) {
       <svg className={cls} fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={active ? 2.5 : 1.8}
           d="M3 9.75L12 3l9 6.75V21a.75.75 0 01-.75.75H15.75a.75.75 0 01-.75-.75v-4.5h-6V21a.75.75 0 01-.75.75H3.75A.75.75 0 013 21V9.75z" />
-      </svg>
-    );
-  }
-  if (name === 'Daily') {
-    return (
-      <svg className={cls} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={active ? 2.5 : 1.8}
-          d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
       </svg>
     );
   }

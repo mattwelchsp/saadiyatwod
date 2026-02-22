@@ -1,12 +1,14 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { detectWorkoutTypeFromWodText, parseTimeInput, formatSeconds, WorkoutType } from '../lib/wodType';
-import { todayInTZ, formatDateDisplay, isSaturday, isSunday, shiftDate } from '../lib/timezone';
+import {
+  todayInTZ, formatDateDisplay, isSaturday, isSunday, isWeekend, shiftDate, isoWeekday,
+} from '../lib/timezone';
 import BottomNav from '../components/BottomNav';
 
-// ── Types ───────────────────────────────────────────────────────────────────
+// ── Types ────────────────────────────────────────────────────────────────────
 
 type Profile = { id: string; display_name: string | null; avatar_url: string | null };
 
@@ -35,7 +37,7 @@ type Score = {
   avatar_url: string | null;
 };
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function effectiveType(wod: Wod | null): WorkoutType {
   if (!wod) return 'UNKNOWN';
@@ -69,7 +71,6 @@ function sortScores(rows: Score[], type: WorkoutType): Score[] {
   return copy;
 }
 
-/** For team WODs: group scores by team_id, return one representative per team (sorted) */
 function groupTeams(scores: Score[]): Score[][] {
   const groups = new Map<string, Score[]>();
   const solo: Score[] = [];
@@ -93,7 +94,15 @@ function canEdit(score: Score): boolean {
   return Date.now() - new Date(score.created_at).getTime() < 30 * 60 * 1000;
 }
 
+/** Get the Monday of the week containing `dateStr`, then offset by `weekDelta` weeks. */
+function getWeekDates(dateStr: string, weekDelta: number): string[] {
+  const wd = isoWeekday(dateStr); // 1=Mon … 7=Sun
+  const monday = shiftDate(dateStr, -(wd - 1) + weekDelta * 7);
+  return Array.from({ length: 7 }, (_, i) => shiftDate(monday, i));
+}
+
 const MEDALS = ['🥇', '🥈', '🥉'];
+const DAY_LABELS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
 
 function TypeBadge({ type }: { type: WorkoutType }) {
   if (type !== 'TIME' && type !== 'AMRAP') return null;
@@ -108,21 +117,11 @@ function TypeBadge({ type }: { type: WorkoutType }) {
 // ── Teammate Picker ──────────────────────────────────────────────────────────
 
 function TeammatePicker({
-  members,
-  meId,
-  selected,
-  onToggle,
-  guestNames,
-  onAddGuest,
-  onRemoveGuest,
+  members, meId, selected, onToggle, guestNames, onAddGuest, onRemoveGuest,
 }: {
-  members: Profile[];
-  meId: string;
-  selected: string[];
-  onToggle: (id: string) => void;
-  guestNames: string[];
-  onAddGuest: (name: string) => void;
-  onRemoveGuest: (name: string) => void;
+  members: Profile[]; meId: string; selected: string[];
+  onToggle: (id: string) => void; guestNames: string[];
+  onAddGuest: (name: string) => void; onRemoveGuest: (name: string) => void;
 }) {
   const [showGuestInput, setShowGuestInput] = useState(false);
   const [guestInput, setGuestInput] = useState('');
@@ -133,27 +132,17 @@ function TeammatePicker({
     setGuestInput('');
   };
 
-  const others = members.filter((m) => m.id !== meId);
-
   return (
     <div className="mt-4 space-y-3">
       <p className="text-xs text-slate-500">Teammates <span className="text-slate-600">(you are auto-included)</span></p>
 
-      {/* Registered member list */}
-      {others.length > 0 && (
+      {members.filter((m) => m.id !== meId).length > 0 && (
         <div className="max-h-48 overflow-y-auto space-y-1 rounded-xl border border-white/10 bg-slate-900 p-2">
-          {others.map((m) => {
+          {members.filter((m) => m.id !== meId).map((m) => {
             const active = selected.includes(m.id);
             return (
-              <button
-                key={m.id}
-                type="button"
-                onClick={() => onToggle(m.id)}
-                className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors ${
-                  active ? 'bg-white/15' : 'hover:bg-white/5'
-                }`}
-              >
-                {/* Avatar */}
+              <button key={m.id} type="button" onClick={() => onToggle(m.id)}
+                className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors ${active ? 'bg-white/15' : 'hover:bg-white/5'}`}>
                 {m.avatar_url ? (
                   <img src={m.avatar_url} alt="" className="h-7 w-7 flex-shrink-0 rounded-full object-cover" />
                 ) : (
@@ -175,7 +164,6 @@ function TeammatePicker({
         </div>
       )}
 
-      {/* Guest names already added */}
       {guestNames.map((name) => (
         <div key={name} className="flex items-center justify-between rounded-lg border border-white/10 bg-slate-900 px-3 py-2">
           <div className="flex items-center gap-2">
@@ -185,74 +173,59 @@ function TeammatePicker({
             <span className="text-sm text-slate-300">{name}</span>
             <span className="rounded-full border border-white/10 px-1.5 py-0.5 text-xs text-slate-500">guest</span>
           </div>
-          <button
-            type="button"
-            onClick={() => onRemoveGuest(name)}
-            className="text-slate-600 hover:text-slate-300"
-          >
-            ✕
-          </button>
+          <button type="button" onClick={() => onRemoveGuest(name)} className="text-slate-600 hover:text-slate-300">✕</button>
         </div>
       ))}
 
-      {/* Guest add section */}
       {!showGuestInput ? (
-        <button
-          type="button"
-          onClick={() => setShowGuestInput(true)}
-          className="text-xs text-slate-500 hover:text-slate-300 underline underline-offset-2"
-        >
+        <button type="button" onClick={() => setShowGuestInput(true)}
+          className="text-xs text-slate-500 hover:text-slate-300 underline underline-offset-2">
           + Partner not in the app?
         </button>
       ) : (
         <div className="flex gap-2">
-          <input
-            type="text"
-            autoFocus
-            value={guestInput}
+          <input type="text" autoFocus value={guestInput}
             onChange={(e) => setGuestInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitGuest(); } }}
             placeholder="Their name (e.g. Sara K.)"
-            className="flex-1 rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none"
-          />
-          <button
-            type="button"
-            onClick={commitGuest}
-            className="rounded-xl bg-white/10 px-3 py-2 text-sm font-medium text-white hover:bg-white/20"
-          >
-            Add
-          </button>
-          <button
-            type="button"
-            onClick={() => { setShowGuestInput(false); setGuestInput(''); }}
-            className="rounded-xl px-3 py-2 text-sm text-slate-500 hover:text-slate-300"
-          >
-            Cancel
-          </button>
+            className="flex-1 rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none" />
+          <button type="button" onClick={commitGuest}
+            className="rounded-xl bg-white/10 px-3 py-2 text-sm font-medium text-white hover:bg-white/20">Add</button>
+          <button type="button" onClick={() => { setShowGuestInput(false); setGuestInput(''); }}
+            className="rounded-xl px-3 py-2 text-sm text-slate-500 hover:text-slate-300">Cancel</button>
         </div>
       )}
     </div>
   );
 }
 
-// ── Component ────────────────────────────────────────────────────────────────
+// ── Main Component ───────────────────────────────────────────────────────────
 
 export default function HomePage() {
   const today = todayInTZ();
   const tomorrow = shiftDate(today, 1);
-  const saturday = isSaturday(today);
-  const sunday = isSunday(today);
 
+  // Calendar state
+  const [selectedDate, setSelectedDate] = useState(today);
+  const [weekDelta, setWeekDelta] = useState(0); // 0 = week containing today
+  const [wodDates, setWodDates] = useState<Set<string>>(new Set());
+
+  // Auth + profile
   const [meId, setMeId] = useState<string | null>(null);
   const [meProfile, setMeProfile] = useState<Profile | null>(null);
   const [members, setMembers] = useState<Profile[]>([]);
+
+  // Data for selected date
   const [wod, setWod] = useState<Wod | null>(null);
   const [tomorrowWod, setTomorrowWod] = useState<Wod | null>(null);
   const [scores, setScores] = useState<Score[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [dataLoading, setDataLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(true);
+
+  // WOD tab (only relevant when selectedDate === today)
   const [wodTab, setWodTab] = useState<'today' | 'tomorrow'>('today');
 
-  // submission state
+  // Score submission
   const [isRx, setIsRx] = useState(true);
   const [timeInput, setTimeInput] = useState('');
   const [amrapRounds, setAmrapRounds] = useState('');
@@ -264,60 +237,78 @@ export default function HomePage() {
   const [submitErr, setSubmitErr] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
 
-  const type = effectiveType(wod);
+  // One-time auth + member load
+  useEffect(() => {
+    (async () => {
+      const { data: authData } = await supabase.auth.getUser();
+      const user = authData.user ?? null;
+      if (user) {
+        setMeId(user.id);
+        const [profileRes, membersRes] = await Promise.all([
+          supabase.from('profiles').select('id, display_name, avatar_url').eq('id', user.id).single(),
+          supabase.from('profiles').select('id, display_name, avatar_url').order('display_name'),
+        ]);
+        if (profileRes.data) setMeProfile(profileRes.data as Profile);
+        if (membersRes.data) setMembers(membersRes.data as Profile[]);
+      }
+    })();
+  }, []);
 
-  const loadData = useCallback(async () => {
-    const { data: authData } = await supabase.auth.getUser();
-    const user = authData.user ?? null;
+  // Load WOD dates for the visible week (for calendar dots)
+  const weekDates = getWeekDates(today, weekDelta);
+  useEffect(() => {
+    const from = weekDates[0];
+    const to = weekDates[6];
+    supabase.from('wods').select('wod_date').gte('wod_date', from).lte('wod_date', to)
+      .then(({ data }) => {
+        if (data) setWodDates(new Set(data.map((r: any) => r.wod_date)));
+      });
+  }, [weekDelta]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    if (user) {
-      setMeId(user.id);
-      const [profileRes, membersRes] = await Promise.all([
-        supabase.from('profiles').select('id, display_name, avatar_url').eq('id', user.id).single(),
-        supabase.from('profiles').select('id, display_name, avatar_url').order('display_name'),
-      ]);
-      if (profileRes.data) setMeProfile(profileRes.data as Profile);
-      if (membersRes.data) setMembers(membersRes.data as Profile[]);
-    }
+  // Load WOD + scores whenever selectedDate changes
+  const loadDateData = useCallback(async (date: string) => {
+    setDataLoading(true);
+    setSubmitMsg(null); setSubmitErr(null);
 
-    const [wodRes, tomorrowRes] = await Promise.all([
-      supabase.from('wods').select('wod_date, wod_text, workout_type_override, is_team, team_size').eq('wod_date', today).maybeSingle(),
-      supabase.from('wods').select('wod_date, wod_text, workout_type_override, is_team, team_size').eq('wod_date', tomorrow).maybeSingle(),
+    const [wodRes, scoreRows, allProfiles] = await Promise.all([
+      supabase.from('wods').select('wod_date, wod_text, workout_type_override, is_team, team_size').eq('wod_date', date).maybeSingle(),
+      supabase.from('scores').select('id, athlete_id, time_seconds, time_input, amrap_rounds, amrap_reps, amrap_input, is_rx, team_id, guest_names, created_at, last_edited_at').eq('wod_date', date),
+      supabase.from('profiles').select('id, display_name, avatar_url'),
     ]);
 
-    const todayWodData = wodRes.data as Wod | null;
-    setWod(todayWodData);
-    setTomorrowWod(tomorrowRes.data as Wod | null);
+    const wodData = wodRes.data as Wod | null;
+    setWod(wodData);
 
-    if (todayWodData) {
-      const [scoreRows, allProfiles] = await Promise.all([
-        supabase.from('scores').select('id, athlete_id, time_seconds, time_input, amrap_rounds, amrap_reps, amrap_input, is_rx, team_id, guest_names, created_at, last_edited_at').eq('wod_date', today),
-        supabase.from('profiles').select('id, display_name, avatar_url'),
-      ]);
-      if (scoreRows.data) {
-        const nameMap = new Map((allProfiles.data ?? []).map((m: any) => [m.id, m as Profile]));
-        const mapped: Score[] = scoreRows.data.map((r: any) => ({
-          ...r,
-          guest_names: r.guest_names ?? [],
-          display_name: nameMap.get(r.athlete_id)?.display_name ?? null,
-          avatar_url: nameMap.get(r.athlete_id)?.avatar_url ?? null,
-        }));
-        setScores(sortScores(mapped, effectiveType(todayWodData)));
-      }
+    // Also load tomorrow's WOD for the preview tab (only relevant when date === today)
+    if (date === today) {
+      supabase.from('wods').select('wod_date, wod_text, workout_type_override, is_team, team_size').eq('wod_date', tomorrow).maybeSingle()
+        .then(({ data }) => setTomorrowWod(data as Wod | null));
+    } else {
+      setTomorrowWod(null);
     }
 
-    setLoading(false);
+    if (scoreRows.data) {
+      const nameMap = new Map((allProfiles.data ?? []).map((m: any) => [m.id, m as Profile]));
+      const mapped: Score[] = scoreRows.data.map((r: any) => ({
+        ...r,
+        guest_names: r.guest_names ?? [],
+        display_name: nameMap.get(r.athlete_id)?.display_name ?? null,
+        avatar_url: nameMap.get(r.athlete_id)?.avatar_url ?? null,
+      }));
+      setScores(sortScores(mapped, effectiveType(wodData)));
+    } else {
+      setScores([]);
+    }
+
+    setDataLoading(false);
+    setInitialLoading(false);
   }, [today, tomorrow]);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => { loadDateData(selectedDate); }, [selectedDate, loadDateData]);
 
+  const type = effectiveType(wod);
   const myScore = scores.find((s) => s.athlete_id === meId);
-
-  // For team WODs group into teams, for solo just wrap each in an array
-  const top3Groups = wod?.is_team
-    ? groupTeams(scores).slice(0, 3)
-    : scores.slice(0, 3).map((s) => [s]);
-  const totalEntries = wod?.is_team ? groupTeams(scores).length : scores.length;
+  const isToday = selectedDate === today;
 
   const handleSubmit = async (editMode = false) => {
     if (!meId) return;
@@ -374,12 +365,19 @@ export default function HomePage() {
       setSubmitMsg('✓ Stay hard — David Goggins');
       setTimeInput(''); setAmrapRounds(''); setAmrapReps('');
       setTeamMates([]); setGuestNames([]); setEditing(false);
-      await loadData();
+      await loadDateData(today);
     }
     setSubmitting(false);
   };
 
-  if (loading) {
+  const selectDate = (d: string) => {
+    setSelectedDate(d);
+    setWodTab('today');
+    setEditing(false);
+    setTeamMates([]); setGuestNames([]);
+  };
+
+  if (initialLoading) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-black">
         <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/20 border-t-white" />
@@ -387,7 +385,7 @@ export default function HomePage() {
     );
   }
 
-  // ── Shared header ──────────────────────────────────────────────────────────
+  // ── Header ──────────────────────────────────────────────────────────────────
   const header = (
     <div className="flex items-center justify-between">
       <div>
@@ -413,45 +411,111 @@ export default function HomePage() {
     </div>
   );
 
-  // ── Saturday ───────────────────────────────────────────────────────────────
-  if (saturday) {
+  // ── Calendar strip ──────────────────────────────────────────────────────────
+  const canGoForward = weekDelta < 0 || weekDates.some((d) => d <= tomorrow);
+  const isCurrentWeek = weekDelta === 0;
+
+  const calendar = (
+    <div className="rounded-2xl border border-white/10 bg-[#0a0f1e] px-3 py-3">
+      <div className="flex items-center gap-1">
+        {/* Prev week */}
+        <button onClick={() => setWeekDelta((w) => w - 1)}
+          className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-slate-500 hover:bg-white/10 hover:text-white transition-colors">
+          ‹
+        </button>
+
+        {/* Day cells */}
+        <div className="flex flex-1 justify-around">
+          {weekDates.map((d, i) => {
+            const isSelected = d === selectedDate;
+            const isTodayCell = d === today;
+            const isFuture = d > tomorrow;
+            const weekend = isWeekend(d);
+            const hasWod = wodDates.has(d);
+
+            return (
+              <button
+                key={d}
+                disabled={isFuture}
+                onClick={() => selectDate(d)}
+                className={`flex flex-col items-center gap-0.5 rounded-xl px-2 py-1.5 transition-colors ${
+                  isSelected
+                    ? 'bg-white text-black'
+                    : isFuture
+                    ? 'cursor-not-allowed opacity-25'
+                    : weekend
+                    ? 'text-slate-600 hover:bg-white/5 hover:text-slate-400'
+                    : 'text-slate-400 hover:bg-white/10 hover:text-white'
+                }`}
+              >
+                <span className="text-xs font-medium">{DAY_LABELS[i]}</span>
+                <span className={`text-sm font-bold leading-none ${isSelected ? 'text-black' : ''}`}>
+                  {d.slice(8)}
+                </span>
+                {/* dot: today indicator (when not selected) or WOD exists */}
+                <span className="h-1 w-1 rounded-full mt-0.5">
+                  {!isSelected && isTodayCell ? (
+                    <span className="block h-1 w-1 rounded-full bg-white" />
+                  ) : !isSelected && hasWod ? (
+                    <span className={`block h-1 w-1 rounded-full ${weekend ? 'bg-slate-600' : 'bg-slate-400'}`} />
+                  ) : null}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Next week */}
+        <button
+          onClick={() => setWeekDelta((w) => w + 1)}
+          disabled={isCurrentWeek}
+          className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-slate-500 hover:bg-white/10 hover:text-white transition-colors disabled:opacity-20 disabled:cursor-not-allowed">
+          ›
+        </button>
+      </div>
+    </div>
+  );
+
+  // ── Weekend view (when selected date is a weekend) ──────────────────────────
+  const selectedIsWeekend = isWeekend(selectedDate);
+  const selectedIsSaturday = isSaturday(selectedDate);
+
+  if (selectedIsWeekend) {
     return (
       <main className="mx-auto flex min-h-screen w-full max-w-lg flex-col gap-5 bg-black px-4 py-10 pb-28 text-slate-100">
         {header}
+        {calendar}
         <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center">
-          <div className="text-4xl">💪</div>
-          <p className="mt-3 text-xl font-bold text-white">Send It Saturday!</p>
-          <p className="mt-1 text-sm text-slate-400">No leaderboard today — just vibes.</p>
+          {selectedIsSaturday ? (
+            <>
+              <div className="text-4xl">💪</div>
+              <p className="mt-3 text-xl font-bold text-white">Send It Saturday!</p>
+              <p className="mt-1 text-sm text-slate-400">No leaderboard today — just vibes.</p>
+            </>
+          ) : (
+            <>
+              <div className="text-4xl">🛌</div>
+              <p className="mt-3 text-xl font-bold text-white">Rest Day</p>
+              <p className="mt-1 text-sm text-slate-400">Leaderboard is Mon – Fri only.</p>
+            </>
+          )}
         </div>
         <BottomNav />
       </main>
     );
   }
 
-  // ── Sunday ─────────────────────────────────────────────────────────────────
-  if (sunday) {
-    return (
-      <main className="mx-auto flex min-h-screen w-full max-w-lg flex-col gap-5 bg-black px-4 py-10 pb-28 text-slate-100">
-        {header}
-        <WodCard wod={wod} tomorrowWod={tomorrowWod} tab={wodTab} onTabChange={setWodTab} type={type} />
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-5 text-center">
-          <p className="text-sm font-semibold text-white">Leaderboard is Mon – Fri only</p>
-          <p className="mt-1 text-xs text-slate-500">Get it done today. Compete tomorrow.</p>
-        </div>
-        <BottomNav />
-      </main>
-    );
-  }
-
-  // ── Weekday ────────────────────────────────────────────────────────────────
+  // ── Weekday view ─────────────────────────────────────────────────────────────
   const scoreable = type === 'TIME' || type === 'AMRAP';
+  const displayedGroups = wod?.is_team ? groupTeams(scores) : scores.map((s) => [s]);
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-lg flex-col gap-5 bg-black px-4 py-10 pb-28 text-slate-100">
       {header}
+      {calendar}
 
-      {/* 1. Score submission */}
-      {scoreable && wod && (
+      {/* Score submission — only for today */}
+      {isToday && scoreable && wod && (
         <section className="rounded-2xl border border-white/10 bg-[#0a0f1e] p-5">
           {!meId ? (
             <div className="flex flex-col items-center gap-3 py-2 text-center">
@@ -473,10 +537,8 @@ export default function HomePage() {
                   <p className="mt-0.5 text-xs text-slate-500">{myScore.is_rx ? 'Rx' : 'Scaled'}</p>
                 </div>
                 {canEdit(myScore) && (
-                  <button
-                    onClick={() => { setEditing(true); setSubmitMsg(null); }}
-                    className="rounded-xl border border-white/20 px-4 py-1.5 text-xs font-medium text-slate-300 hover:bg-white/10"
-                  >
+                  <button onClick={() => { setEditing(true); setSubmitMsg(null); }}
+                    className="rounded-xl border border-white/20 px-4 py-1.5 text-xs font-medium text-slate-300 hover:bg-white/10">
                     Edit (30 min)
                   </button>
                 )}
@@ -487,32 +549,22 @@ export default function HomePage() {
               <h2 className="mb-4 text-sm font-semibold text-slate-300">
                 {editing ? 'Edit Score' : 'Submit Score'}
               </h2>
-
-              {/* Rx / Scaled */}
               <div className="mb-4 flex rounded-xl border border-white/10 p-0.5 text-sm">
                 {['Rx', 'Scaled'].map((label) => (
-                  <button
-                    key={label}
-                    onClick={() => setIsRx(label === 'Rx')}
+                  <button key={label} onClick={() => setIsRx(label === 'Rx')}
                     className={`flex-1 rounded-lg py-1.5 font-medium transition-colors ${
                       (label === 'Rx') === isRx ? 'bg-white text-black' : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
+                    }`}>
                     {label}
                   </button>
                 ))}
               </div>
-
               {type === 'TIME' && (
-                <input
-                  type="text" value={timeInput}
-                  onChange={(e) => setTimeInput(e.target.value)}
+                <input type="text" value={timeInput} onChange={(e) => setTimeInput(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleSubmit(editing)}
                   placeholder="mm:ss"
-                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none"
-                />
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none" />
               )}
-
               {type === 'AMRAP' && (
                 <div className="flex gap-3">
                   <div className="flex-1">
@@ -527,19 +579,14 @@ export default function HomePage() {
                   </div>
                 </div>
               )}
-
               {wod.is_team && (
-                <TeammatePicker
-                  members={members}
-                  meId={meId}
+                <TeammatePicker members={members} meId={meId}
                   selected={teamMates}
                   onToggle={(id) => setTeamMates((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id])}
                   guestNames={guestNames}
                   onAddGuest={(name) => setGuestNames((p) => [...p, name])}
-                  onRemoveGuest={(name) => setGuestNames((p) => p.filter((n) => n !== name))}
-                />
+                  onRemoveGuest={(name) => setGuestNames((p) => p.filter((n) => n !== name))} />
               )}
-
               <button onClick={() => handleSubmit(editing)} disabled={submitting}
                 className="mt-4 w-full rounded-xl bg-white py-2.5 text-sm font-semibold text-black hover:bg-slate-200 disabled:opacity-40">
                 {submitting ? 'Saving…' : editing ? 'Save Edit' : 'Submit Score'}
@@ -551,92 +598,125 @@ export default function HomePage() {
               )}
             </>
           )}
-
           {submitMsg && <p className="mt-3 text-sm font-medium text-green-400">{submitMsg}</p>}
           {submitErr && <p className="mt-3 text-sm text-red-400">{submitErr}</p>}
         </section>
       )}
 
-      {/* 2. Top 3 */}
+      {/* Leaderboard */}
       <section>
-        <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-slate-500">Top 3 Today</h2>
-        {!scoreable ? (
-          <p className="text-sm text-slate-500">No leaderboard for this workout.</p>
-        ) : top3Groups.length === 0 ? (
-          <div className="rounded-2xl border border-white/10 bg-[#0a0f1e] px-6 py-8 text-center text-sm text-slate-500">
-            Be the first to suffer.
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-500">Leaderboard</h2>
+          {!isToday && (
+            <span className="text-xs text-slate-600">{formatDateDisplay(selectedDate)}</span>
+          )}
+        </div>
+
+        {dataLoading ? (
+          <div className="flex justify-center py-8">
+            <div className="h-5 w-5 animate-spin rounded-full border-2 border-white/20 border-t-white" />
           </div>
-        ) : (
+        ) : !scoreable ? (
+          <p className="text-sm text-slate-500">No leaderboard for this workout type.</p>
+        ) : displayedGroups.length === 0 ? (
+          <div className="rounded-2xl border border-white/10 bg-[#0a0f1e] px-6 py-8 text-center text-sm text-slate-500">
+            {isToday ? 'Be the first to suffer.' : 'No scores posted for this day.'}
+          </div>
+        ) : wod?.is_team ? (
+          /* Team leaderboard */
           <div className="flex flex-col gap-2">
-            {top3Groups.map((group, idx) => {
+            {displayedGroups.map((group, idx) => {
               const rep = group[0];
               const isMyGroup = group.some((s) => s.athlete_id === meId);
-              const allGuests = rep.guest_names ?? [];
-
+              const guests = rep.guest_names ?? [];
               return (
-                <div key={rep.id} className={`flex items-center gap-3 rounded-2xl border px-4 py-3 ${
-                  isMyGroup ? 'border-white/20 bg-white/10' : 'border-white/10 bg-[#0a0f1e]'
-                }`}>
-                  <span className="w-8 flex-shrink-0 text-center text-xl">{MEDALS[idx]}</span>
-                  <div className="min-w-0 flex-1">
-                    {wod?.is_team ? (
-                      /* Team: stack member names */
-                      <div className="space-y-0.5">
-                        {group.map((s) => (
-                          <div key={s.id} className="flex items-center gap-1.5">
-                            {s.avatar_url ? (
-                              <img src={s.avatar_url} alt="" className="h-5 w-5 flex-shrink-0 rounded-full object-cover" />
-                            ) : (
-                              <div className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-white/10 text-xs font-bold">
-                                {(s.display_name ?? '?')[0]?.toUpperCase()}
-                              </div>
-                            )}
-                            <span className="text-sm font-medium text-white">{s.display_name ?? 'Unknown'}</span>
-                          </div>
-                        ))}
-                        {allGuests.map((g) => (
-                          <div key={g} className="flex items-center gap-1.5">
-                            <div className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-white/5 text-xs text-slate-500">
-                              {g[0]?.toUpperCase()}
-                            </div>
-                            <span className="text-sm text-slate-400">{g}</span>
-                            <span className="text-xs text-slate-600">(guest)</span>
-                          </div>
-                        ))}
-                        <p className="mt-0.5 text-xs text-slate-500">{rep.is_rx ? 'Rx' : 'Scaled'}</p>
-                      </div>
-                    ) : (
-                      /* Solo */
-                      <>
-                        <div className="flex items-center gap-2">
-                          {rep.avatar_url ? (
-                            <img src={rep.avatar_url} alt="" className="h-7 w-7 flex-shrink-0 rounded-full object-cover" />
+                <div key={rep.id} className={`rounded-2xl border px-4 py-3 ${isMyGroup ? 'border-white/20 bg-white/10' : 'border-white/10 bg-[#0a0f1e]'}`}>
+                  <div className="flex items-center gap-3">
+                    <span className="w-8 flex-shrink-0 text-center text-xl">{MEDALS[idx] ?? <span className="text-sm text-slate-500">{idx + 1}</span>}</span>
+                    <div className="flex flex-1 flex-col gap-1">
+                      {group.map((s) => (
+                        <div key={s.id} className="flex items-center gap-2">
+                          {s.avatar_url ? (
+                            <img src={s.avatar_url} alt="" className="h-6 w-6 rounded-full object-cover" />
                           ) : (
-                            <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-white/10 text-xs font-bold">
-                              {(rep.display_name ?? '?')[0]?.toUpperCase()}
+                            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-white/10 text-xs font-bold">
+                              {(s.display_name ?? '?')[0]?.toUpperCase()}
                             </div>
                           )}
-                          <p className="truncate text-sm font-medium text-white">{rep.display_name ?? 'Unknown'}</p>
+                          <span className="text-sm text-slate-200">{s.display_name ?? 'Unknown'}</span>
                         </div>
-                        <p className="ml-9 text-xs text-slate-500">{rep.is_rx ? 'Rx' : 'Scaled'}</p>
-                      </>
-                    )}
+                      ))}
+                      {guests.map((g) => (
+                        <div key={g} className="flex items-center gap-2">
+                          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-white/5 text-xs text-slate-500">
+                            {g[0]?.toUpperCase()}
+                          </div>
+                          <span className="text-sm text-slate-400">{g}</span>
+                          <span className="text-xs text-slate-600">(guest)</span>
+                        </div>
+                      ))}
+                      <span className="mt-0.5 text-xs text-slate-500">{rep.is_rx ? 'Rx' : 'Scaled'}</span>
+                    </div>
+                    <span className="flex-shrink-0 text-sm font-bold text-white">{scoreDisplay(rep, type)}</span>
                   </div>
-                  <span className="flex-shrink-0 text-sm font-bold text-white">{scoreDisplay(rep, type)}</span>
                 </div>
               );
             })}
-            {totalEntries > 3 && (
-              <a href="/leaderboard" className="mt-1 text-center text-xs text-slate-500 hover:text-slate-300">
-                View full leaderboard →
-              </a>
-            )}
+          </div>
+        ) : (
+          /* Individual leaderboard */
+          <div className="overflow-hidden rounded-2xl border border-white/10">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-white/5 text-xs text-slate-500">
+                <tr>
+                  <th className="px-4 py-2.5">#</th>
+                  <th className="px-4 py-2.5">Athlete</th>
+                  <th className="px-4 py-2.5 text-right">Score</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {scores.map((s, idx) => {
+                  const isMe = s.athlete_id === meId;
+                  return (
+                    <tr key={s.id} className={isMe ? 'bg-white/10' : 'hover:bg-white/5'}>
+                      <td className="w-10 px-4 py-3 text-slate-400 text-sm">
+                        {MEDALS[idx] ?? <span className="text-xs text-slate-500">{idx + 1}</span>}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2.5">
+                          {s.avatar_url ? (
+                            <img src={s.avatar_url} alt="" className="h-7 w-7 rounded-full object-cover" />
+                          ) : (
+                            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-xs font-bold">
+                              {(s.display_name ?? '?')[0]?.toUpperCase()}
+                            </div>
+                          )}
+                          <div>
+                            <p className={`font-medium ${isMe ? 'text-white' : 'text-slate-100'}`}>{s.display_name ?? 'Unknown'}</p>
+                            <p className="text-xs text-slate-600">{s.is_rx ? 'Rx' : 'Scaled'}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-right font-bold text-white">{scoreDisplay(s, type)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </section>
 
-      {/* 3. WOD */}
-      <WodCard wod={wod} tomorrowWod={tomorrowWod} tab={wodTab} onTabChange={setWodTab} type={type} />
+      {/* WOD */}
+      <WodCard
+        wod={wod}
+        tomorrowWod={isToday ? tomorrowWod : null}
+        date={selectedDate}
+        isToday={isToday}
+        tab={wodTab}
+        onTabChange={setWodTab}
+        type={type}
+      />
 
       <BottomNav />
     </main>
@@ -646,10 +726,12 @@ export default function HomePage() {
 // ── WOD Card ─────────────────────────────────────────────────────────────────
 
 function WodCard({
-  wod, tomorrowWod, tab, onTabChange, type,
+  wod, tomorrowWod, date, isToday, tab, onTabChange, type,
 }: {
   wod: Wod | null;
   tomorrowWod: Wod | null;
+  date: string;
+  isToday: boolean;
   tab: 'today' | 'tomorrow';
   onTabChange: (t: 'today' | 'tomorrow') => void;
   type: WorkoutType;
@@ -661,21 +743,26 @@ function WodCard({
   return (
     <section className="rounded-2xl border border-white/10 bg-[#0a0f1e] p-5">
       <div className="mb-3 flex items-center justify-between">
-        <div className="flex rounded-lg border border-white/10 p-0.5 text-xs">
-          {(['today', 'tomorrow'] as const).map((t) => (
-            <button
-              key={t}
-              onClick={() => onTabChange(t)}
-              disabled={t === 'tomorrow' && !hasTomorrow}
-              className={`rounded-md px-3 py-1 font-medium capitalize transition-colors ${
-                tab === t
-                  ? 'bg-white/15 text-white'
-                  : 'text-slate-500 hover:text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed'
-              }`}
-            >
-              {t}
-            </button>
-          ))}
+        <div className="flex items-center gap-3">
+          {isToday ? (
+            /* Today: show today/tomorrow toggle */
+            <div className="flex rounded-lg border border-white/10 p-0.5 text-xs">
+              {(['today', 'tomorrow'] as const).map((t) => (
+                <button key={t} onClick={() => onTabChange(t)}
+                  disabled={t === 'tomorrow' && !hasTomorrow}
+                  className={`rounded-md px-3 py-1 font-medium capitalize transition-colors ${
+                    tab === t ? 'bg-white/15 text-white' : 'text-slate-500 hover:text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed'
+                  }`}>
+                  {t}
+                </button>
+              ))}
+            </div>
+          ) : (
+            /* Past date: show the date label */
+            <span className="text-xs font-medium text-slate-400">
+              WOD · {formatDateDisplay(date)}
+            </span>
+          )}
         </div>
         <TypeBadge type={displayedType} />
       </div>
@@ -684,7 +771,7 @@ function WodCard({
         <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-100">{displayed.wod_text}</p>
       ) : (
         <p className="text-sm text-slate-500">
-          {tab === 'tomorrow' ? "Tomorrow's WOD hasn't been posted yet." : 'No WOD posted yet.'}
+          {tab === 'tomorrow' ? "Tomorrow's WOD hasn't been posted yet." : 'No WOD posted for this day.'}
         </p>
       )}
     </section>
