@@ -24,6 +24,16 @@ export function isoWeekday(isoDate: string): number {
   return day === 0 ? 7 : day;
 }
 
+/** True if the date is Saturday. */
+export function isSaturday(isoDate: string): boolean {
+  return isoWeekday(isoDate) === 6;
+}
+
+/** True if the date is Sunday. */
+export function isSunday(isoDate: string): boolean {
+  return isoWeekday(isoDate) === 7;
+}
+
 /** True if the date is Saturday or Sunday. */
 export function isWeekend(isoDate: string): boolean {
   const wd = isoWeekday(isoDate);
