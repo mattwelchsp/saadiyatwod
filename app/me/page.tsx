@@ -173,10 +173,12 @@ function computeStats(
   }
 
   // Monthly podiums — for each month where user was active, compute full standings
-  const myMonths = [...new Set(myDates.map((d) => d.slice(0, 7)))];
+  const currentMonth = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' }).slice(0, 7);
+  // Only count completed months — the current month isn't finalised yet
+  const completedMonths = [...new Set(myDates.map((d) => d.slice(0, 7)))].filter((m) => m < currentMonth);
   let monthlyFirst = 0, monthlySecond = 0, monthlyThird = 0;
 
-  for (const month of myMonths) {
+  for (const month of completedMonths) {
     const monthWods = allWods.filter((w) => w.wod_date.startsWith(month));
     const monthScores = allScores.filter((s) => s.wod_date.startsWith(month));
     const pointsMap = computeMonthlyPoints(monthWods, monthScores);
