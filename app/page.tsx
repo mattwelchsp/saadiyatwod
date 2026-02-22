@@ -491,7 +491,7 @@ export default function HomePage() {
             <>
               <div className="text-4xl">💪</div>
               <p className="mt-3 text-xl font-bold text-white">Send It Saturday!</p>
-              <p className="mt-1 text-sm text-slate-400">No leaderboard today — just vibes.</p>
+              <p className="mt-1 text-sm text-slate-400">Leaderboard is Mon – Fri only.</p>
             </>
           ) : (
             <>
