@@ -26,6 +26,7 @@ type Score = {
   amrap_input: string | null;
   is_rx: boolean;
   team_id: string | null;
+  guest_names: string[];
   display_name: string | null;
   avatar_url: string | null;
 };
@@ -124,11 +125,12 @@ export default function LeaderboardPage() {
     if (wodData) {
       const { data: scoreRows } = await supabase
         .from('scores')
-        .select('id, athlete_id, time_seconds, time_input, amrap_rounds, amrap_reps, amrap_input, is_rx, team_id')
+        .select('id, athlete_id, time_seconds, time_input, amrap_rounds, amrap_reps, amrap_input, is_rx, team_id, guest_names')
         .eq('wod_date', d);
 
       const mapped: Score[] = (scoreRows ?? []).map((r: any) => ({
         ...r,
+        guest_names: r.guest_names ?? [],
         display_name: nameMap.get(r.athlete_id)?.display_name ?? null,
         avatar_url: nameMap.get(r.athlete_id)?.avatar_url ?? null,
       }));
@@ -229,6 +231,15 @@ export default function LeaderboardPage() {
                               </div>
                             )}
                             <span className="text-sm text-slate-200">{s.display_name ?? 'Unknown'}</span>
+                          </div>
+                        ))}
+                        {(representative.guest_names ?? []).map((g) => (
+                          <div key={g} className="flex items-center gap-2">
+                            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-white/5 text-xs text-slate-500">
+                              {g[0]?.toUpperCase()}
+                            </div>
+                            <span className="text-sm text-slate-400">{g}</span>
+                            <span className="text-xs text-slate-600">(guest)</span>
                           </div>
                         ))}
                       </div>
