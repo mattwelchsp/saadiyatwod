@@ -13,7 +13,7 @@ function tomorrowInTZ(): string {
   return d.toLocaleDateString('en-CA', { timeZone: TZ });
 }
 
-/** Strip HTML tags from a string */
+/** Strip HTML tags */
 function stripHtml(html: string): string {
   return html
     .replace(/<[^>]+>/g, ' ')
@@ -46,13 +46,11 @@ function stripBoilerplate(text: string): string {
     .trim();
 }
 
-/** Fetch JSON from a URL, return null on error */
 async function fetchJson(url: string): Promise<any | null> {
   try {
     const res = await fetch(url, {
       headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
         Accept: 'application/json',
       },
       next: { revalidate: 0 },
@@ -66,185 +64,175 @@ async function fetchJson(url: string): Promise<any | null> {
   }
 }
 
-// ── Strategy 1: The Events Calendar (Tribe) REST API ──────────────────────────
-// Used by many CrossFit/fitness WordPress sites
-async function tryTribeEventsAPI(
+// ── Strategy 1: Modern Events Calendar (mec/v1) ───────────────────────────────
+// vfuae.com uses the MEC plugin — confirmed by /wp-json/ namespaces list
+async function tryMecAPI(
   today: string,
   tomorrow: string,
   debug: boolean
 ): Promise<{ wods: { date: string; text: string }[]; debugInfo?: any }> {
   const wods: { date: string; text: string }[] = [];
-  const debugLogs: any[] = [];
+  const logs: any[] = [];
 
-  // Try fetching events for today and tomorrow
+  // MEC REST API endpoints to try
   const urlsToTry = [
-    // With location filter
-    `${BASE}/wp-json/tribe/events/v1/events?per_page=50&start_date=${today}&end_date=${tomorrow}&search=saadiyat`,
-    // Without location filter — grab all and filter by location field
-    `${BASE}/wp-json/tribe/events/v1/events?per_page=50&start_date=${today}&end_date=${tomorrow}`,
-    // Wider range in case dates are off
-    `${BASE}/wp-json/tribe/events/v1/events?per_page=50`,
+    // Standard MEC events list with date range
+    `${BASE}/wp-json/mec/v1/events?start=${today}&end=${tomorrow}`,
+    `${BASE}/wp-json/mec/v1/events?from=${today}&to=${tomorrow}`,
+    `${BASE}/wp-json/mec/v1/events?date=${today}`,
+    // MEC events custom post type via wp/v2
+    `${BASE}/wp-json/wp/v2/mec-events?per_page=50&orderby=date&order=desc&after=${today}T00:00:00`,
+    `${BASE}/wp-json/wp/v2/mec-events?per_page=50&orderby=date&order=desc`,
+    // MEC might use a "single_day" param
+    `${BASE}/wp-json/mec/v1/events?single_day=${today}`,
+    // Just grab all recent events
+    `${BASE}/wp-json/mec/v1/events?per_page=50`,
+    `${BASE}/wp-json/mec/v1/events`,
   ];
 
   for (const url of urlsToTry) {
     const data = await fetchJson(url);
-    if (debug) debugLogs.push({ url, response: data ? JSON.stringify(data).slice(0, 500) : 'null/error' });
+    const preview = data ? JSON.stringify(data).slice(0, 600) : 'null/error';
+    if (debug) logs.push({ url, response: preview });
     if (!data) continue;
 
-    const events: any[] = data.events ?? (Array.isArray(data) ? data : []);
+    // MEC can return { events: [...] } or just [...]
+    const events: any[] = data.events ?? data.data ?? (Array.isArray(data) ? data : []);
     if (events.length === 0) continue;
 
+    if (debug) logs.push({ found: events.length, firstEvent: JSON.stringify(events[0]).slice(0, 400) });
+
     for (const ev of events) {
-      // Extract date
+      // MEC stores dates differently — try multiple fields
       const eventDate: string =
+        ev.date?.start?.date?.slice(0, 10) ??
+        ev.start?.slice(0, 10) ??
         ev.start_date?.slice(0, 10) ??
-        ev.start_date_details?.year
-          ? `${ev.start_date_details?.year}-${String(ev.start_date_details?.month).padStart(2, '0')}-${String(ev.start_date_details?.day).padStart(2, '0')}`
-          : '';
+        ev.date?.slice(0, 10) ??
+        (ev.date?.start ? String(ev.date.start).slice(0, 10) : '') ??
+        '';
 
-      if (eventDate !== today && eventDate !== tomorrow) continue;
+      if (eventDate && eventDate !== today && eventDate !== tomorrow) continue;
 
-      // Check if this event is for Saadiyat location
-      const title: string = ev.title ?? '';
-      const description: string = stripHtml(ev.description ?? '');
-      const venue: string = ev.venue?.venue ?? '';
-      const categories: string[] = (ev.categories ?? []).map((c: any) => c.name ?? '');
-      const allText = [title, description, venue, ...categories].join(' ').toLowerCase();
+      const title: string = stripHtml(ev.title ?? ev.post_title ?? '');
+      const content: string = stripHtml(
+        ev.content ?? ev.post_content ?? ev.description ?? ev.excerpt ?? ''
+      );
+      const location: string = ev.location?.name ?? ev.venue ?? ev.location ?? '';
+      const allText = [title, content, location].join(' ').toLowerCase();
 
-      if (!allText.includes('saadiyat') && !allText.includes('wod')) continue;
-
-      const clean = stripBoilerplate(`${title}\n${description}`);
-      if (clean.length > 10 && !wods.find((w) => w.date === eventDate)) {
-        wods.push({ date: eventDate, text: clean });
+      // Must relate to Saadiyat or be a WOD entry
+      if (!allText.includes('saadiyat') && !allText.includes('wod')) {
+        // If no date filter worked, try title-based WOD detection
+        if (!title.toLowerCase().includes('crossfit') && !content.toLowerCase().includes('amrap')) continue;
       }
-    }
-
-    if (wods.length > 0) break; // Found what we need
-  }
-
-  return { wods, debugInfo: debug ? { strategy: 'tribe-events', logs: debugLogs } : undefined };
-}
-
-// ── Strategy 2: WordPress REST API posts ──────────────────────────────────────
-async function tryWpPostsAPI(
-  today: string,
-  tomorrow: string,
-  debug: boolean
-): Promise<{ wods: { date: string; text: string }[]; debugInfo?: any }> {
-  const wods: { date: string; text: string }[] = [];
-  const debugLogs: any[] = [];
-
-  const urlsToTry = [
-    // Posts with WOD search term, recent
-    `${BASE}/wp-json/wp/v2/posts?per_page=20&search=wod&orderby=date&order=desc`,
-    // All recent posts (last 2 days worth)
-    `${BASE}/wp-json/wp/v2/posts?per_page=20&after=${today}T00:00:00&orderby=date&order=desc`,
-    // Try a custom post type "wod" if it exists
-    `${BASE}/wp-json/wp/v2/wod?per_page=20&orderby=date&order=desc`,
-  ];
-
-  for (const url of urlsToTry) {
-    const data = await fetchJson(url);
-    if (debug) debugLogs.push({ url, response: data ? JSON.stringify(data).slice(0, 500) : 'null/error' });
-    if (!Array.isArray(data) || data.length === 0) continue;
-
-    for (const post of data) {
-      const postDate: string = (post.date ?? '').slice(0, 10);
-      if (postDate !== today && postDate !== tomorrow) continue;
-
-      const title: string = post.title?.rendered ?? '';
-      const content: string = stripHtml(post.content?.rendered ?? '');
-      const allText = [title, content].join(' ').toLowerCase();
-
-      if (!allText.includes('saadiyat') && !allText.includes('wod')) continue;
 
       const clean = stripBoilerplate(`${title}\n${content}`);
-      if (clean.length > 10 && !wods.find((w) => w.date === postDate)) {
-        wods.push({ date: postDate, text: clean });
+      if (clean.length > 10) {
+        const useDate = eventDate || today;
+        if (!wods.find((w) => w.date === useDate)) {
+          wods.push({ date: useDate, text: clean });
+        }
       }
     }
 
     if (wods.length > 0) break;
   }
 
-  return { wods, debugInfo: debug ? { strategy: 'wp-posts', logs: debugLogs } : undefined };
+  return {
+    wods,
+    debugInfo: debug ? { strategy: 'mec/v1', logs } : undefined,
+  };
 }
 
-// ── Strategy 3: WordPress REST API — discover custom post types ───────────────
-async function tryWpTypesDiscovery(
+// ── Strategy 2: mec-events custom post type ───────────────────────────────────
+async function tryMecPostType(
   today: string,
   tomorrow: string,
   debug: boolean
 ): Promise<{ wods: { date: string; text: string }[]; debugInfo?: any }> {
   const wods: { date: string; text: string }[] = [];
-  const debugLogs: any[] = [];
+  const logs: any[] = [];
 
-  // Discover what post types / namespaces exist
-  const types = await fetchJson(`${BASE}/wp-json/wp/v2/types`);
-  if (debug) debugLogs.push({ url: `${BASE}/wp-json/wp/v2/types`, response: types ? JSON.stringify(types).slice(0, 1000) : 'null' });
+  const url = `${BASE}/wp-json/wp/v2/mec-events?per_page=50&orderby=modified&order=desc`;
+  const data = await fetchJson(url);
+  if (debug) logs.push({ url, response: data ? JSON.stringify(data).slice(0, 800) : 'null/error' });
 
-  const namespaces = await fetchJson(`${BASE}/wp-json/`);
-  if (debug) debugLogs.push({ url: `${BASE}/wp-json/`, namespaces: namespaces?.namespaces ?? 'null' });
+  if (Array.isArray(data) && data.length > 0) {
+    if (debug) logs.push({ count: data.length, firstItem: JSON.stringify(data[0]).slice(0, 600) });
 
-  // If we found custom post types, try fetching from them
-  if (types && typeof types === 'object') {
-    for (const [slug, typeInfo] of Object.entries(types)) {
-      const info = typeInfo as any;
-      const restBase: string = info?.rest_base ?? slug;
-      if (['post', 'page', 'attachment', 'revision', 'nav_menu_item'].includes(slug)) continue;
+    for (const item of data) {
+      const postDate: string = (item.date ?? '').slice(0, 10);
+      const meta = item.meta ?? {};
+      // MEC stores event start in meta fields
+      const mecStart: string =
+        meta.mec_start_date ??
+        meta.mec_start_datetime ??
+        '';
+      const useDate = mecStart ? mecStart.slice(0, 10) : postDate;
 
-      if (debug) debugLogs.push({ trying: `${BASE}/wp-json/wp/v2/${restBase}` });
+      if (useDate && useDate !== today && useDate !== tomorrow) continue;
 
-      const data = await fetchJson(`${BASE}/wp-json/wp/v2/${restBase}?per_page=20&orderby=date&order=desc`);
-      if (!Array.isArray(data) || data.length === 0) continue;
+      const title: string = stripHtml(item.title?.rendered ?? '');
+      const content: string = stripHtml(item.content?.rendered ?? '');
+      const allText = [title, content].join(' ').toLowerCase();
 
-      for (const item of data) {
-        const itemDate: string = (item.date ?? '').slice(0, 10);
-        if (itemDate !== today && itemDate !== tomorrow) continue;
+      if (!allText.includes('saadiyat') && !allText.includes('wod') && !allText.includes('crossfit')) continue;
 
-        const title: string = item.title?.rendered ?? '';
-        const content: string = stripHtml(item.content?.rendered ?? '');
-        const clean = stripBoilerplate(`${title}\n${content}`);
-
-        if (clean.length > 10 && !wods.find((w) => w.date === itemDate)) {
-          wods.push({ date: itemDate, text: clean });
-        }
+      const clean = stripBoilerplate(`${title}\n${content}`);
+      if (clean.length > 10 && !wods.find((w) => w.date === (useDate || today))) {
+        wods.push({ date: useDate || today, text: clean });
       }
     }
   }
 
-  return { wods, debugInfo: debug ? { strategy: 'wp-types-discovery', logs: debugLogs } : undefined };
+  return { wods, debugInfo: debug ? { strategy: 'mec-post-type', logs } : undefined };
 }
 
-// ── Main scrape function ───────────────────────────────────────────────────────
-async function scrapeWods(debug: boolean): Promise<{
-  wods: { date: string; text: string }[];
-  debugInfo?: any;
-}> {
+// ── Strategy 3: listo/v1 (the other custom namespace on their site) ────────────
+async function tryListoAPI(
+  today: string,
+  _tomorrow: string,
+  debug: boolean
+): Promise<{ wods: { date: string; text: string }[]; debugInfo?: any }> {
+  const logs: any[] = [];
+
+  // Probe what listo/v1 offers
+  const root = await fetchJson(`${BASE}/wp-json/listo/v1`);
+  if (debug) logs.push({ url: `${BASE}/wp-json/listo/v1`, response: root ? JSON.stringify(root).slice(0, 600) : 'null/error' });
+
+  const events = await fetchJson(`${BASE}/wp-json/listo/v1/events?date=${today}`);
+  if (debug) logs.push({ url: `${BASE}/wp-json/listo/v1/events?date=${today}`, response: events ? JSON.stringify(events).slice(0, 600) : 'null/error' });
+
+  const wods: { date: string; text: string }[] = [];
+  return { wods, debugInfo: debug ? { strategy: 'listo/v1', logs } : undefined };
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+async function scrapeWods(debug: boolean) {
   const today = todayInTZ();
   const tomorrow = tomorrowInTZ();
   const allDebug: any[] = [];
 
-  // Try each strategy in order
-  const { wods: w1, debugInfo: d1 } = await tryTribeEventsAPI(today, tomorrow, debug);
+  const { wods: w1, debugInfo: d1 } = await tryMecAPI(today, tomorrow, debug);
   if (debug) allDebug.push(d1);
   if (w1.length > 0) return { wods: w1, debugInfo: debug ? { today, tomorrow, strategies: allDebug } : undefined };
 
-  const { wods: w2, debugInfo: d2 } = await tryWpPostsAPI(today, tomorrow, debug);
+  const { wods: w2, debugInfo: d2 } = await tryMecPostType(today, tomorrow, debug);
   if (debug) allDebug.push(d2);
   if (w2.length > 0) return { wods: w2, debugInfo: debug ? { today, tomorrow, strategies: allDebug } : undefined };
 
-  const { wods: w3, debugInfo: d3 } = await tryWpTypesDiscovery(today, tomorrow, debug);
+  const { wods: w3, debugInfo: d3 } = await tryListoAPI(today, tomorrow, debug);
   if (debug) allDebug.push(d3);
   if (w3.length > 0) return { wods: w3, debugInfo: debug ? { today, tomorrow, strategies: allDebug } : undefined };
 
   return {
     wods: [],
-    debugInfo: debug ? { today, tomorrow, strategies: allDebug, note: 'All strategies returned 0 results. Check the debug logs to see what APIs returned.' } : undefined,
+    debugInfo: debug
+      ? { today, tomorrow, strategies: allDebug, note: 'All strategies returned 0 WODs. See strategy logs for raw API responses.' }
+      : undefined,
   };
 }
-
-// ── Route handler ─────────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
   const secret = process.env.CRON_SECRET;
@@ -268,12 +256,10 @@ export async function GET(req: NextRequest) {
 
     const db = createServiceClient();
     let saved = 0;
-
     for (const { date, text } of wods) {
       const { error } = await db
         .from('wods')
         .upsert({ wod_date: date, wod_text: text }, { onConflict: 'wod_date' });
-
       if (!error) saved++;
       else console.error(`Failed to save WOD for ${date}:`, error.message);
     }
