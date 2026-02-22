@@ -62,9 +62,8 @@ function addSectionSpacing(text: string): string {
       // Section header patterns: "A)", "B)", "1.", "2.", "Round X", "Part X", "-into-"
       const isHeader =
         /^[A-Z]\)\s/.test(trimmed) ||           // A) B) C)
-        /^\d+[\)\.]\s/.test(trimmed) ||          // 1. 2. 3)
         /^-+into-+$/i.test(trimmed) ||           // -into-
-        /^(round|part|block|buy.?in|buy.?out)\b/i.test(trimmed);
+        /^(buy.?in|buy.?out)\b/i.test(trimmed);  // Buy in / Buy out
       return isHeader ? '\n' + line : line;
     })
     .join('\n');
