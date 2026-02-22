@@ -494,11 +494,7 @@ export default function HomePage() {
               <p className="mt-1 text-sm text-slate-400">Leaderboard is Mon – Fri only.</p>
             </>
           ) : (
-            <>
-              <div className="text-4xl">🛌</div>
-              <p className="mt-3 text-xl font-bold text-white">Rest Day</p>
-              <p className="mt-1 text-sm text-slate-400">Leaderboard is Mon – Fri only.</p>
-            </>
+            <p className="text-sm text-slate-400">Leaderboard is Mon – Fri only.</p>
           )}
         </div>
         <WodCard

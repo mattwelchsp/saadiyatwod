@@ -6,6 +6,8 @@ import { supabase } from '../../lib/supabase';
 import { detectWorkoutTypeFromWodText, formatSeconds, WorkoutType } from '../../lib/wodType';
 import BottomNav from '../../components/BottomNav';
 
+// ── Types ─────────────────────────────────────────────────────────────────────
+
 type RecentScore = {
   wod_date: string;
   time_seconds: number | null;
@@ -17,6 +19,33 @@ type RecentScore = {
   wod_text: string | null;
   workout_type_override: string | null;
 };
+
+type ScoreRaw = {
+  wod_date: string;
+  athlete_id: string;
+  time_seconds: number | null;
+  amrap_rounds: number | null;
+  amrap_reps: number | null;
+  team_id: string | null;
+};
+
+type WodRaw = {
+  wod_date: string;
+  wod_text: string;
+  workout_type_override: string | null;
+};
+
+type AllTimeStats = {
+  wodsLogged: number;
+  dailyGold: number;
+  dailySilver: number;
+  dailyBronze: number;
+  monthlyFirst: number;
+  monthlySecond: number;
+  monthlyThird: number;
+};
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function scoreDisplay(s: RecentScore): string {
   const type: WorkoutType = (s.workout_type_override as WorkoutType | null) ?? detectWorkoutTypeFromWodText(s.wod_text);
@@ -31,6 +60,147 @@ function scoreDisplay(s: RecentScore): string {
   return '—';
 }
 
+function getEffectiveType(wod: WodRaw): WorkoutType {
+  return (wod.workout_type_override as WorkoutType | null) ?? detectWorkoutTypeFromWodText(wod.wod_text);
+}
+
+/** Rank all scores for one WOD date. Returns [[1st place ids], [2nd], [3rd]] */
+function rankForDate(scores: ScoreRaw[], type: WorkoutType): string[][] {
+  if (type === 'NO_SCORE' || type === 'UNKNOWN') return [];
+
+  // De-dupe by athlete, one rep per team
+  const seen = new Set<string>();
+  const teamMap = new Map<string, ScoreRaw>();
+  const individuals: ScoreRaw[] = [];
+  for (const s of scores) {
+    if (s.team_id) {
+      if (!teamMap.has(s.team_id)) teamMap.set(s.team_id, s);
+    } else {
+      if (!seen.has(s.athlete_id)) { seen.add(s.athlete_id); individuals.push(s); }
+    }
+  }
+  const reps = [...Array.from(teamMap.values()), ...individuals];
+
+  const sorted = [...reps].sort((a, b) => {
+    if (type === 'TIME') return (a.time_seconds ?? Infinity) - (b.time_seconds ?? Infinity);
+    const av = (a.amrap_rounds ?? -1) * 10000 + (a.amrap_reps ?? -1);
+    const bv = (b.amrap_rounds ?? -1) * 10000 + (b.amrap_reps ?? -1);
+    return bv - av;
+  });
+
+  if (sorted.length === 0) return [];
+
+  const bands: string[][] = [];
+  let i = 0;
+  while (i < sorted.length && bands.length < 3) {
+    const cur = sorted[i];
+    const band: string[] = [];
+    let j = i;
+    while (j < sorted.length) {
+      const next = sorted[j];
+      const tied = type === 'TIME'
+        ? (cur.time_seconds ?? Infinity) === (next.time_seconds ?? Infinity)
+        : (cur.amrap_rounds ?? -1) === (next.amrap_rounds ?? -1) && (cur.amrap_reps ?? -1) === (next.amrap_reps ?? -1);
+      if (!tied && j > i) break;
+      // For team scores, expand to all team members
+      if (next.team_id) {
+        scores.filter((s) => s.team_id === next.team_id).forEach((s) => band.push(s.athlete_id));
+      } else {
+        band.push(next.athlete_id);
+      }
+      j++;
+    }
+    bands.push([...new Set(band)]);
+    i = j;
+  }
+  return bands;
+}
+
+/** Compute points per athlete for a set of wods + scores. Returns map: athleteId → {gold,silver,bronze} */
+function computeMonthlyPoints(
+  wods: WodRaw[],
+  scores: ScoreRaw[]
+): Map<string, { gold: number; silver: number; bronze: number; total: number }> {
+  const map = new Map<string, { gold: number; silver: number; bronze: number; total: number }>();
+  const ensure = (id: string) => {
+    if (!map.has(id)) map.set(id, { gold: 0, silver: 0, bronze: 0, total: 0 });
+    return map.get(id)!;
+  };
+
+  for (const wod of wods) {
+    const type = getEffectiveType(wod);
+    const dayScores = scores.filter((s) => s.wod_date === wod.wod_date);
+    const bands = rankForDate(dayScores, type);
+    const pts = [3, 2, 1];
+    bands.forEach((band, idx) => {
+      const p = pts[idx] ?? 0;
+      if (!p) return;
+      for (const id of band) {
+        const e = ensure(id);
+        if (p === 3) e.gold++;
+        else if (p === 2) e.silver++;
+        else e.bronze++;
+        e.total += p;
+      }
+    });
+  }
+  return map;
+}
+
+/** Compute all-time stats for a given athlete from raw data */
+function computeStats(
+  uid: string,
+  myDates: string[],
+  allScores: ScoreRaw[],
+  allWods: WodRaw[]
+): AllTimeStats {
+  const wodMap = new Map(allWods.map((w) => [w.wod_date, w]));
+
+  // WODs logged = distinct dates the user posted a score
+  const wodsLogged = myDates.length;
+
+  // Daily medals
+  let dailyGold = 0, dailySilver = 0, dailyBronze = 0;
+  for (const date of myDates) {
+    const wod = wodMap.get(date);
+    if (!wod) continue;
+    const type = getEffectiveType(wod);
+    const dayScores = allScores.filter((s) => s.wod_date === date);
+    const bands = rankForDate(dayScores, type);
+    if (bands[0]?.includes(uid)) dailyGold++;
+    else if (bands[1]?.includes(uid)) dailySilver++;
+    else if (bands[2]?.includes(uid)) dailyBronze++;
+  }
+
+  // Monthly podiums — for each month where user was active, compute full standings
+  const myMonths = [...new Set(myDates.map((d) => d.slice(0, 7)))];
+  let monthlyFirst = 0, monthlySecond = 0, monthlyThird = 0;
+
+  for (const month of myMonths) {
+    const monthWods = allWods.filter((w) => w.wod_date.startsWith(month));
+    const monthScores = allScores.filter((s) => s.wod_date.startsWith(month));
+    const pointsMap = computeMonthlyPoints(monthWods, monthScores);
+
+    const ranked = [...pointsMap.entries()]
+      .filter(([, v]) => v.total > 0)
+      .sort(([, a], [, b]) => {
+        if (b.total !== a.total) return b.total - a.total;
+        if (b.gold !== a.gold) return b.gold - a.gold;
+        if (b.silver !== a.silver) return b.silver - a.silver;
+        return b.bronze - a.bronze;
+      });
+
+    const myRank = ranked.findIndex(([id]) => id === uid);
+    if (myRank === 0) monthlyFirst++;
+    else if (myRank === 1) monthlySecond++;
+    else if (myRank === 2) monthlyThird++;
+  }
+
+  return { wodsLogged, dailyGold, dailySilver, dailyBronze, monthlyFirst, monthlySecond, monthlyThird };
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
 export default function MePage() {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -39,6 +209,7 @@ export default function MePage() {
   const [displayName, setDisplayName] = useState('');
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [recentScores, setRecentScores] = useState<RecentScore[]>([]);
+  const [stats, setStats] = useState<AllTimeStats | null>(null);
 
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -53,40 +224,56 @@ export default function MePage() {
       const uid = authData.user.id;
       setUserId(uid);
 
+      // Profile
       const { data: profile } = await supabase
-        .from('profiles')
-        .select('display_name, avatar_url')
-        .eq('id', uid)
-        .single();
-
+        .from('profiles').select('display_name, avatar_url').eq('id', uid).single();
       if (profile) {
         setDisplayName(profile.display_name ?? '');
         setAvatarUrl(profile.avatar_url ?? null);
       }
 
-      // Recent scores with WOD info
-      const { data: scores } = await supabase
+      // User's own scores (all time) for date list + recent display
+      const { data: myScoreRows } = await supabase
         .from('scores')
         .select('wod_date, time_seconds, time_input, amrap_rounds, amrap_reps, amrap_input, is_rx')
         .eq('athlete_id', uid)
-        .order('wod_date', { ascending: false })
-        .limit(20);
+        .order('wod_date', { ascending: false });
 
-      if (scores && scores.length > 0) {
-        const dates = scores.map((s: any) => s.wod_date);
-        const { data: wods } = await supabase
-          .from('wods')
-          .select('wod_date, wod_text, workout_type_override')
-          .in('wod_date', dates);
+      if (!myScoreRows || myScoreRows.length === 0) return;
 
-        const wodMap = new Map((wods ?? []).map((w: any) => [w.wod_date, w]));
-        setRecentScores(
-          scores.map((s: any) => ({
-            ...s,
-            wod_text: wodMap.get(s.wod_date)?.wod_text ?? null,
-            workout_type_override: wodMap.get(s.wod_date)?.workout_type_override ?? null,
-          }))
+      const myDates = [...new Set(myScoreRows.map((s: any) => s.wod_date as string))];
+
+      // WODs for all their dates
+      const { data: wodRows } = await supabase
+        .from('wods')
+        .select('wod_date, wod_text, workout_type_override')
+        .in('wod_date', myDates);
+
+      const wodMap = new Map((wodRows ?? []).map((w: any) => [w.wod_date, w]));
+
+      // Recent scores (last 20) with WOD info
+      setRecentScores(
+        myScoreRows.slice(0, 20).map((s: any) => ({
+          ...s,
+          wod_text: wodMap.get(s.wod_date)?.wod_text ?? null,
+          workout_type_override: wodMap.get(s.wod_date)?.workout_type_override ?? null,
+        }))
+      );
+
+      // All scores for all their active dates (for ranking)
+      const { data: allScoreRows } = await supabase
+        .from('scores')
+        .select('wod_date, athlete_id, time_seconds, amrap_rounds, amrap_reps, team_id')
+        .in('wod_date', myDates);
+
+      if (allScoreRows && wodRows) {
+        const computedStats = computeStats(
+          uid,
+          myDates,
+          allScoreRows as ScoreRaw[],
+          wodRows as WodRaw[]
         );
+        setStats(computedStats);
       }
     })();
   }, [router]);
@@ -117,12 +304,8 @@ export default function MePage() {
     const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(path);
     const publicUrl = `${urlData.publicUrl}?t=${Date.now()}`;
 
-    const { error: updateErr } = await supabase
-      .from('profiles')
-      .update({ avatar_url: publicUrl })
-      .eq('id', userId);
-
-    if (updateErr) { setErr(updateErr.message); }
+    const { error: updateErr } = await supabase.from('profiles').update({ avatar_url: publicUrl }).eq('id', userId);
+    if (updateErr) setErr(updateErr.message);
     else { setAvatarUrl(publicUrl); setMsg('Avatar updated!'); }
     setUploading(false);
   };
@@ -137,7 +320,7 @@ export default function MePage() {
 
       <h1 className="text-xl font-bold text-white">My Profile</h1>
 
-      {/* Avatar */}
+      {/* Avatar + name header */}
       <section className="flex items-center gap-5 rounded-2xl border border-white/10 bg-[#0a0f1e] p-5">
         <button onClick={() => fileRef.current?.click()} className="relative flex-shrink-0">
           {avatarUrl ? (
@@ -158,6 +341,49 @@ export default function MePage() {
         <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
       </section>
 
+      {/* All-time stats */}
+      {stats && (
+        <section className="rounded-2xl border border-white/10 bg-[#0a0f1e] p-5">
+          <h2 className="mb-4 text-xs font-semibold uppercase tracking-widest text-slate-500">All-Time</h2>
+
+          {/* WODs logged */}
+          <div className="mb-4 flex items-baseline justify-between border-b border-white/5 pb-4">
+            <span className="text-sm text-slate-400">WODs logged</span>
+            <span className="text-2xl font-bold text-white">{stats.wodsLogged}</span>
+          </div>
+
+          {/* Daily medals */}
+          <p className="mb-2 text-xs text-slate-600 uppercase tracking-wider">Daily</p>
+          <div className="mb-4 grid grid-cols-3 gap-3 border-b border-white/5 pb-4">
+            {[
+              { label: '🥇 1st', value: stats.dailyGold },
+              { label: '🥈 2nd', value: stats.dailySilver },
+              { label: '🥉 3rd', value: stats.dailyBronze },
+            ].map(({ label, value }) => (
+              <div key={label} className="rounded-xl bg-white/5 px-3 py-3 text-center">
+                <p className="text-lg">{label}</p>
+                <p className="mt-1 text-xl font-bold text-white">{value}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Monthly podiums */}
+          <p className="mb-2 text-xs text-slate-600 uppercase tracking-wider">Monthly</p>
+          <div className="grid grid-cols-3 gap-3">
+            {[
+              { label: '🥇 1st', value: stats.monthlyFirst },
+              { label: '🥈 2nd', value: stats.monthlySecond },
+              { label: '🥉 3rd', value: stats.monthlyThird },
+            ].map(({ label, value }) => (
+              <div key={label} className="rounded-xl bg-white/5 px-3 py-3 text-center">
+                <p className="text-lg">{label}</p>
+                <p className="mt-1 text-xl font-bold text-white">{value}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* Display name */}
       <section className="rounded-2xl border border-white/10 bg-[#0a0f1e] p-5">
         <label className="mb-2 block text-sm font-medium text-slate-300">
@@ -171,11 +397,8 @@ export default function MePage() {
           placeholder="Matt W."
           className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none"
         />
-        <button
-          onClick={handleSaveName}
-          disabled={saving}
-          className="mt-3 rounded-xl bg-white px-5 py-2 text-sm font-semibold text-black hover:bg-slate-200 disabled:opacity-40"
-        >
+        <button onClick={handleSaveName} disabled={saving}
+          className="mt-3 rounded-xl bg-white px-5 py-2 text-sm font-semibold text-black hover:bg-slate-200 disabled:opacity-40">
           {saving ? 'Saving...' : 'Save'}
         </button>
         {msg && <p className="mt-2 text-sm text-green-400">{msg}</p>}
@@ -185,7 +408,7 @@ export default function MePage() {
       {/* Recent scores */}
       {recentScores.length > 0 && (
         <section>
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-widest text-slate-500">Recent Scores</h2>
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-slate-500">Recent Scores</h2>
           <div className="overflow-hidden rounded-2xl border border-white/10">
             <table className="w-full text-left text-sm">
               <tbody className="divide-y divide-white/5">
@@ -203,10 +426,8 @@ export default function MePage() {
       )}
 
       {/* Logout */}
-      <button
-        onClick={handleLogout}
-        className="mt-2 rounded-xl border border-white/10 py-2.5 text-sm font-medium text-slate-400 hover:text-white"
-      >
+      <button onClick={handleLogout}
+        className="mt-2 rounded-xl border border-white/10 py-2.5 text-sm font-medium text-slate-400 hover:text-white">
         Log out
       </button>
 
