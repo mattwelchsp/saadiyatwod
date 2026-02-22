@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { parse } from 'node-html-parser';
 import { createServiceClient } from '../../../lib/supabase';
 
 const TZ = process.env.APP_TIMEZONE ?? 'Asia/Dubai';
-const BASE = 'https://vfuae.com';
+const WOD_URL = 'https://vfuae.com/wod/';
 
 function todayInTZ(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: TZ });
@@ -13,203 +14,117 @@ function tomorrowInTZ(): string {
   return d.toLocaleDateString('en-CA', { timeZone: TZ });
 }
 
-function stripHtml(html: string): string {
-  return html
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&#8211;/g, '–')
-    .replace(/&#8217;/g, "'")
-    .replace(/\s{2,}/g, ' ')
-    .trim();
+/** Convert DD/MM/YYYY → YYYY-MM-DD */
+function parseDDMMYYYY(s: string): string | null {
+  const m = /\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/.exec(s.trim());
+  if (!m) return null;
+  const [, d, mo, y] = m;
+  return `${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`;
 }
 
+/** Strip HTML boilerplate lines */
 function stripBoilerplate(text: string): string {
   return text
     .split('\n')
-    .filter((line) => {
-      const l = line.trim().toUpperCase();
+    .map((l) => l.trim())
+    .filter((l) => {
+      const u = l.toUpperCase();
       return (
-        !l.startsWith('NO RESERVATION') &&
-        !l.startsWith('MORE THAN 5 MINUTES') &&
-        !l.includes('NO ENTRY TO CLASS') &&
-        !l.includes('BOOK YOUR CLASS') &&
-        l !== 'WOD' &&
-        !l.match(/^VOGUE FITNESS/)
+        l.length > 0 &&
+        !u.startsWith('NO RESERVATION') &&
+        !u.startsWith('MORE THAN 5 MIN') &&
+        !u.includes('NO CLASS ENTRY') &&
+        !u.includes('BOOK YOUR CLASS') &&
+        u !== 'WOD' &&
+        !u.match(/^VOGUE FITNESS/)
       );
     })
     .join('\n')
     .trim();
 }
 
-async function fetchJson(url: string): Promise<any | null> {
+/** Fetch the WOD page HTML with browser-like headers */
+async function fetchWodPage(): Promise<string | null> {
   try {
-    const res = await fetch(url, {
+    const res = await fetch(WOD_URL, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-        Accept: 'application/json',
+        'User-Agent':
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        Accept:
+          'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Cache-Control': 'no-cache',
+        Pragma: 'no-cache',
       },
       next: { revalidate: 0 },
     });
     if (!res.ok) return null;
-    const ct = res.headers.get('content-type') ?? '';
-    if (!ct.includes('json')) return null;
-    return res.json();
+    return res.text();
   } catch {
     return null;
   }
 }
 
-// ── Strategy 1: listo/v1 — custom WOD plugin ─────────────────────────────────
-// The /wp-json/ discovery showed listo/v1 has a dynamic route:
-//   /listo/v1/(?P<type>[a-z0-9_-]+)
-// We probe likely type names to find the WOD data.
-async function tryListoAPI(
-  today: string,
-  tomorrow: string,
-  debug: boolean
-): Promise<{ wods: { date: string; text: string }[]; debugInfo?: any }> {
-  const wods: { date: string; text: string }[] = [];
-  const logs: any[] = [];
-
-  // Probe every plausible type name
-  const typesToTry = [
-    'wod', 'wods', 'workout', 'workouts', 'daily-wod', 'daily',
-    'crossfit', 'class', 'classes', 'schedule', 'programming',
-    'saadiyat', 'location', 'post', 'entry', 'entries',
-  ];
-
-  for (const type of typesToTry) {
-    const url = `${BASE}/wp-json/listo/v1/${type}`;
-    const data = await fetchJson(url);
-    if (debug) logs.push({ url, response: data ? JSON.stringify(data).slice(0, 400) : 'null/error' });
-    if (!data) continue;
-
-    // Got a non-null response — this type exists! Log it fully in debug mode
-    if (debug) logs.push({ HIT: type, fullResponse: JSON.stringify(data).slice(0, 2000) });
-
-    // Try to extract WOD entries from whatever shape the data is
-    const items: any[] = Array.isArray(data) ? data : (data.data ?? data.items ?? data.results ?? data.wods ?? []);
-
-    for (const item of items) {
-      // Try every possible date field
-      const itemDate: string =
-        item.date?.slice(0, 10) ??
-        item.wod_date?.slice(0, 10) ??
-        item.start_date?.slice(0, 10) ??
-        item.post_date?.slice(0, 10) ??
-        item.event_date?.slice(0, 10) ??
-        '';
-
-      if (itemDate && itemDate !== today && itemDate !== tomorrow) continue;
-
-      // Try every possible location field
-      const locationText = [
-        item.location, item.venue, item.gym, item.branch, item.site,
-        item.location_name, item.location?.name,
-      ].filter(Boolean).join(' ').toLowerCase();
-
-      if (locationText && !locationText.includes('saadiyat')) continue;
-
-      // Extract content
-      const title = stripHtml(item.title ?? item.name ?? item.post_title ?? item.wod_title ?? '');
-      const content = stripHtml(
-        item.content ?? item.description ?? item.workout ?? item.post_content ??
-        item.text ?? item.body ?? ''
-      );
-      const clean = stripBoilerplate(`${title}\n${content}`);
-      if (clean.length > 10) {
-        wods.push({ date: itemDate || today, text: clean });
-      }
-    }
-
-    if (wods.length > 0) break;
-  }
-
-  // Also try with query params on the base wod type
-  if (wods.length === 0) {
-    const urlsWithParams = [
-      `${BASE}/wp-json/listo/v1/wod?date=${today}&location=saadiyat`,
-      `${BASE}/wp-json/listo/v1/wod?date=${today}`,
-      `${BASE}/wp-json/listo/v1/wod?location=saadiyat`,
-      `${BASE}/wp-json/listo/v1/wod?per_page=10`,
-      `${BASE}/wp-json/listo/v1/wods?date=${today}`,
-    ];
-    for (const url of urlsWithParams) {
-      const data = await fetchJson(url);
-      if (debug) logs.push({ url, response: data ? JSON.stringify(data).slice(0, 400) : 'null/error' });
-      if (!data) continue;
-      if (debug && data && JSON.stringify(data) !== '[]' && JSON.stringify(data) !== '{}') {
-        logs.push({ HIT_WITH_PARAMS: url, fullResponse: JSON.stringify(data).slice(0, 2000) });
-      }
-    }
-  }
-
-  return { wods, debugInfo: debug ? { strategy: 'listo/v1', logs } : undefined };
+interface WodEntry {
+  date: string;
+  text: string;
 }
 
-// ── Strategy 2: WordPress custom post type "wod" ──────────────────────────────
-// Check if they registered a plain WP REST endpoint for WODs
-async function tryWpWodPostType(
-  today: string,
-  tomorrow: string,
-  debug: boolean
-): Promise<{ wods: { date: string; text: string }[]; debugInfo?: any }> {
-  const wods: { date: string; text: string }[] = [];
-  const logs: any[] = [];
+/** Parse GravityView WOD entries from the page HTML */
+function parseWods(html: string, targetDates: string[], debug: boolean): {
+  wods: WodEntry[];
+  debugInfo?: any;
+} {
+  const root = parse(html);
 
-  const slugsToTry = ['wod', 'wods', 'daily-wod', 'workout', 'workouts'];
+  // Each WOD is a div.gv-list-view
+  const cards = root.querySelectorAll('div.gv-list-view');
 
-  for (const slug of slugsToTry) {
-    const url = `${BASE}/wp-json/wp/v2/${slug}?per_page=10&orderby=date&order=desc`;
-    const data = await fetchJson(url);
-    if (debug) logs.push({ url, response: data ? JSON.stringify(data).slice(0, 400) : 'null/error' });
-    if (!Array.isArray(data) || data.length === 0) continue;
+  const debugCards: any[] = [];
+  const wods: WodEntry[] = [];
 
-    if (debug) logs.push({ HIT: slug, count: data.length, sample: JSON.stringify(data[0]).slice(0, 600) });
+  for (const card of cards) {
+    // Field 30-5 = date (DD/MM/YYYY)
+    const dateRaw = card.querySelector('.gv-field-30-5')?.text?.trim() ?? '';
+    // Field 30-2 = location
+    const location = card.querySelector('.gv-field-30-2')?.text?.trim() ?? '';
+    // Field 30-4 = WOD content
+    const contentEl = card.querySelector('.gv-field-30-4');
+    const content = contentEl?.text?.replace(/\s+/g, ' ').trim() ?? '';
 
-    for (const item of data) {
-      const postDate = (item.date ?? '').slice(0, 10);
-      if (postDate !== today && postDate !== tomorrow) continue;
+    const isoDate = parseDDMMYYYY(dateRaw);
 
-      const title = stripHtml(item.title?.rendered ?? '');
-      const content = stripHtml(item.content?.rendered ?? '');
-      const allText = [title, content].join(' ').toLowerCase();
-      if (!allText.includes('saadiyat') && !allText.includes('wod') && !allText.includes('crossfit')) continue;
-
-      const clean = stripBoilerplate(`${title}\n${content}`);
-      if (clean.length > 10) wods.push({ date: postDate, text: clean });
+    if (debug) {
+      debugCards.push({ dateRaw, isoDate, location, contentPreview: content.slice(0, 80) });
     }
 
-    if (wods.length > 0) break;
+    // Must be Saadiyat location
+    if (!location.toLowerCase().includes('saadiyat')) continue;
+
+    // Must be today or tomorrow
+    if (!isoDate || !targetDates.includes(isoDate)) continue;
+
+    const clean = stripBoilerplate(content);
+    if (clean.length > 10 && !wods.find((w) => w.date === isoDate)) {
+      wods.push({ date: isoDate, text: clean });
+    }
   }
-
-  return { wods, debugInfo: debug ? { strategy: 'wp-wod-post-type', logs } : undefined };
-}
-
-// ── Main ──────────────────────────────────────────────────────────────────────
-async function scrapeWods(debug: boolean) {
-  const today = todayInTZ();
-  const tomorrow = tomorrowInTZ();
-  const allDebug: any[] = [];
-
-  const { wods: w1, debugInfo: d1 } = await tryListoAPI(today, tomorrow, debug);
-  if (debug) allDebug.push(d1);
-  if (w1.length > 0) return { wods: w1, debugInfo: debug ? { today, tomorrow, strategies: allDebug } : undefined };
-
-  const { wods: w2, debugInfo: d2 } = await tryWpWodPostType(today, tomorrow, debug);
-  if (debug) allDebug.push(d2);
-  if (w2.length > 0) return { wods: w2, debugInfo: debug ? { today, tomorrow, strategies: allDebug } : undefined };
 
   return {
-    wods: [],
+    wods,
     debugInfo: debug
-      ? { today, tomorrow, strategies: allDebug, note: 'No WODs found. Paste this output to investigate further.' }
+      ? {
+          totalCards: cards.length,
+          htmlLength: html.length,
+          firstChars: html.slice(0, 200),
+          cards: debugCards,
+        }
       : undefined,
   };
 }
+
+// ── Route handler ─────────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
   const secret = process.env.CRON_SECRET;
@@ -219,16 +134,27 @@ export async function GET(req: NextRequest) {
   }
 
   const debugMode = req.nextUrl.searchParams.get('debug') === '1';
+  const today = todayInTZ();
+  const tomorrow = tomorrowInTZ();
 
   try {
-    const { wods, debugInfo } = await scrapeWods(debugMode);
+    const html = await fetchWodPage();
+
+    if (!html) {
+      return NextResponse.json({ error: 'Failed to fetch vfuae.com/wod/' }, { status: 502 });
+    }
+
+    const { wods, debugInfo } = parseWods(html, [today, tomorrow], debugMode);
 
     if (debugMode) {
-      return NextResponse.json({ wods, debug: debugInfo });
+      return NextResponse.json({ wods, today, tomorrow, debug: debugInfo });
     }
 
     if (wods.length === 0) {
-      return NextResponse.json({ message: 'No Saadiyat WODs found — try ?debug=1', saved: 0 });
+      return NextResponse.json({
+        message: 'No Saadiyat WODs found for today/tomorrow — try ?debug=1',
+        saved: 0,
+      });
     }
 
     const db = createServiceClient();
