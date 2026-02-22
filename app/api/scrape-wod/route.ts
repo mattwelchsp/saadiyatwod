@@ -25,8 +25,9 @@ function parseDDMMYYYY(s: string): string | null {
 /** Convert HTML content to clean plain text with preserved line breaks */
 function htmlToText(html: string): string {
   return html
-    // Empty or whitespace-only paragraphs (including &nbsp;) → blank line
-    .replace(/<p[^>]*>(\s|&nbsp;)*<\/p>/gi, '\n\n')
+    // Treat &nbsp;-only paragraphs as nothing (not blank lines — the source
+    // uses them between every paragraph, not just section breaks)
+    .replace(/<p[^>]*>(\s|&nbsp;)*<\/p>/gi, '')
     // Paragraph/line breaks → newline
     .replace(/<\/p>\s*<p[^>]*>/gi, '\n')
     .replace(/<br\s*\/?>/gi, '\n')
@@ -43,12 +44,30 @@ function htmlToText(html: string): string {
     .replace(/&#8217;/g, "'")
     .replace(/&#8220;/g, '"')
     .replace(/&#8221;/g, '"')
-    // Tidy up whitespace — preserve intentional blank lines
-    .replace(/[ \t]+/g, ' ')          // collapse horizontal whitespace
-    .replace(/\n /g, '\n')            // trim leading space on each line
-    .replace(/ \n/g, '\n')            // trim trailing space on each line
-    .replace(/\n{3,}/g, '\n\n')       // max two consecutive blank lines
+    // Tidy up whitespace
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n /g, '\n')
+    .replace(/ \n/g, '\n')
+    .replace(/\n{2,}/g, '\n')         // collapse to single newlines for now
     .trim();
+}
+
+/** Add blank lines before section headers like "A)", "B)", "1.", "Round 2", etc. */
+function addSectionSpacing(text: string): string {
+  return text
+    .split('\n')
+    .map((line, i) => {
+      if (i === 0) return line; // never prepend blank before first line
+      const trimmed = line.trim();
+      // Section header patterns: "A)", "B)", "1.", "2.", "Round X", "Part X", "-into-"
+      const isHeader =
+        /^[A-Z]\)\s/.test(trimmed) ||           // A) B) C)
+        /^\d+[\)\.]\s/.test(trimmed) ||          // 1. 2. 3)
+        /^-+into-+$/i.test(trimmed) ||           // -into-
+        /^(round|part|block|buy.?in|buy.?out)\b/i.test(trimmed);
+      return isHeader ? '\n' + line : line;
+    })
+    .join('\n');
 }
 
 /** Strip gym policy boilerplate — truncate at first boilerplate phrase */
@@ -68,13 +87,10 @@ function stripBoilerplate(text: string): string {
     .slice(0, cut)
     .split('\n')
     .map((l) => l.trim())
-    .filter((l, i, arr) => {
-      // Remove boilerplate lines
+    .filter((l) => {
+      if (!l) return false;
       const u = l.toUpperCase();
-      if (u.match(/^VOGUE FITNESS/) || u === 'WOD') return false;
-      // Remove consecutive blank lines but keep single blank lines (section spacing)
-      if (!l) return i > 0 && arr[i - 1] !== '';
-      return true;
+      return !u.match(/^VOGUE FITNESS/) && u !== 'WOD';
     })
     .join('\n')
     .trim();
@@ -142,7 +158,7 @@ function parseWods(html: string, targetDates: string[], debug: boolean): {
     // Must be today or tomorrow
     if (!isoDate || !targetDates.includes(isoDate)) continue;
 
-    const clean = stripBoilerplate(content);
+    const clean = addSectionSpacing(stripBoilerplate(content));
     if (clean.length > 10 && !wods.find((w) => w.date === isoDate)) {
       wods.push({ date: isoDate, text: clean });
     }
