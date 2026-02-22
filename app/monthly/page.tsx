@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import { detectWorkoutTypeFromWodText, formatSeconds, WorkoutType } from '../../lib/wodType';
 import { todayInTZ } from '../../lib/timezone';
@@ -179,7 +178,6 @@ function computePoints(
 // ── Component ──────────────────────────────────────────────────────────────────
 
 export default function MonthlyPage() {
-  const router = useRouter();
   const todayStr = todayInTZ();
   const [year, setYear] = useState(() => parseInt(todayStr.slice(0, 4)));
   const [month, setMonth] = useState(() => parseInt(todayStr.slice(5, 7)));
@@ -191,8 +189,7 @@ export default function MonthlyPage() {
     setLoading(true);
 
     const { data: authData } = await supabase.auth.getUser();
-    if (!authData.user) { router.replace('/login'); return; }
-    setMeId(authData.user.id);
+    setMeId(authData.user?.id ?? null);
 
     const from = `${y}-${String(m).padStart(2, '0')}-01`;
     const lastDay = new Date(y, m, 0).getDate();
@@ -210,7 +207,7 @@ export default function MonthlyPage() {
 
     setRows(computePoints(wods, scores, profiles));
     setLoading(false);
-  }, [router]);
+  }, []);
 
   useEffect(() => { loadMonth(year, month); }, [year, month, loadMonth]);
 
