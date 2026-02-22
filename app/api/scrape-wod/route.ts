@@ -22,29 +22,54 @@ function parseDDMMYYYY(s: string): string | null {
   return `${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`;
 }
 
-/** Strip gym policy boilerplate — works on both single-line and multi-line text */
+/** Convert HTML content to clean plain text with preserved line breaks */
+function htmlToText(html: string): string {
+  return html
+    // Paragraph/line breaks → newline
+    .replace(/<\/p>\s*<p[^>]*>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<p[^>]*>/gi, '')
+    .replace(/<\/p>/gi, '\n')
+    // Strip remaining tags
+    .replace(/<[^>]+>/g, '')
+    // Decode entities
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&#8211;/g, '–')
+    .replace(/&#8217;/g, "'")
+    .replace(/&#8220;/g, '"')
+    .replace(/&#8221;/g, '"')
+    // Tidy up whitespace
+    .replace(/[ \t]+/g, ' ')          // collapse horizontal whitespace
+    .replace(/\n[ \t]+/g, '\n')       // trim leading space on each line
+    .replace(/[ \t]+\n/g, '\n')       // trim trailing space on each line
+    .replace(/\n{3,}/g, '\n\n')       // max two consecutive blank lines
+    .trim();
+}
+
+/** Strip gym policy boilerplate — truncate at first boilerplate phrase */
 function stripBoilerplate(text: string): string {
+  // Everything from "NO RESERVATION" onwards is gym policy — cut it
+  const cutPatterns = [
+    /NO RESERVATION/i,
+    /MORE THAN \d+ MIN/i,
+    /BOOK YOUR CLASS/i,
+  ];
+  let cut = text.length;
+  for (const p of cutPatterns) {
+    const idx = text.search(p);
+    if (idx > 0 && idx < cut) cut = idx;
+  }
   return text
-    // Remove inline boilerplate phrases regardless of case
-    .replace(/NO RESERVATION[^.]*\./gi, '')
-    .replace(/MORE THAN \d+ MINUTES? LATE[^.]*\./gi, '')
-    .replace(/MORE THAN \d+ MIN[^.]*ENTRY[^.]*\./gi, '')
-    .replace(/NO ENTRY TO CLASS\.?/gi, '')
-    .replace(/NO CLASS\.?\s*/gi, '')
-    .replace(/BOOK YOUR CLASS[^.]*\.?/gi, '')
-    // Clean up leftover punctuation/whitespace from removals
-    .replace(/,\s*,/g, ',')
-    .replace(/\.\s*\./g, '.')
+    .slice(0, cut)
     .split('\n')
     .map((l) => l.trim())
     .filter((l) => {
       if (!l) return false;
       const u = l.toUpperCase();
-      return (
-        !u.match(/^VOGUE FITNESS/) &&
-        u !== 'WOD' &&
-        u.length > 0
-      );
+      return !u.match(/^VOGUE FITNESS/) && u !== 'WOD';
     })
     .join('\n')
     .trim();
@@ -96,9 +121,9 @@ function parseWods(html: string, targetDates: string[], debug: boolean): {
     const dateRaw = card.querySelector('.gv-field-30-5')?.text?.trim() ?? '';
     // Field 30-2 = location
     const location = card.querySelector('.gv-field-30-2')?.text?.trim() ?? '';
-    // Field 30-4 = WOD content
+    // Field 30-4 = WOD content — use innerHTML to preserve <p> line breaks
     const contentEl = card.querySelector('.gv-field-30-4');
-    const content = contentEl?.text?.replace(/\s+/g, ' ').trim() ?? '';
+    const content = htmlToText(contentEl?.innerHTML ?? '');
 
     const isoDate = parseDDMMYYYY(dateRaw);
 
