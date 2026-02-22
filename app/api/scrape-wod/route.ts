@@ -68,10 +68,13 @@ function stripBoilerplate(text: string): string {
     .slice(0, cut)
     .split('\n')
     .map((l) => l.trim())
-    .filter((l) => {
-      if (!l) return false;
+    .filter((l, i, arr) => {
+      // Remove boilerplate lines
       const u = l.toUpperCase();
-      return !u.match(/^VOGUE FITNESS/) && u !== 'WOD';
+      if (u.match(/^VOGUE FITNESS/) || u === 'WOD') return false;
+      // Remove consecutive blank lines but keep single blank lines (section spacing)
+      if (!l) return i > 0 && arr[i - 1] !== '';
+      return true;
     })
     .join('\n')
     .trim();
