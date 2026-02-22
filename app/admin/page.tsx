@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import { detectWorkoutTypeFromWodText } from '../../lib/wodType';
@@ -22,6 +22,8 @@ export default function AdminPage() {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [saveErr, setSaveErr] = useState<string | null>(null);
+  const [existingWod, setExistingWod] = useState<string | null>(null);
+  const [loadingExisting, setLoadingExisting] = useState(false);
 
   // Scrape
   const [scraping, setScraping] = useState(false);
@@ -34,6 +36,38 @@ export default function AdminPage() {
       else setAuthed(true);
     });
   }, [router]);
+
+  // Load existing WOD whenever date changes
+  const loadExisting = useCallback(async (date: string) => {
+    setLoadingExisting(true);
+    setExistingWod(null);
+    const { data } = await supabase
+      .from('wods')
+      .select('wod_text, workout_type_override, is_team, team_size')
+      .eq('wod_date', date)
+      .maybeSingle();
+    if (data) {
+      setExistingWod(data.wod_text);
+    }
+    setLoadingExisting(false);
+  }, []);
+
+  useEffect(() => {
+    if (authed) loadExisting(wodDate);
+  }, [authed, wodDate, loadExisting]);
+
+  const handleDateChange = (date: string) => {
+    setWodDate(date);
+    setWodText('');
+    setTypeOverride('');
+    setIsTeam(false);
+    setSaveMsg(null);
+    setSaveErr(null);
+  };
+
+  const handleLoadExisting = () => {
+    if (existingWod) setWodText(existingWod);
+  };
 
   const detectedType = detectWorkoutTypeFromWodText(wodText);
   const typeColor: Record<string, string> = {
@@ -57,7 +91,10 @@ export default function AdminPage() {
 
     const { error } = await supabase.from('wods').upsert(payload, { onConflict: 'wod_date' });
     if (error) setSaveErr(error.message);
-    else { setSaveMsg(`WOD saved for ${wodDate}.`); setWodText(''); setTypeOverride(''); setIsTeam(false); }
+    else {
+      setSaveMsg(`✓ WOD saved for ${wodDate}`);
+      setExistingWod(wodText.trim());
+    }
     setSaving(false);
   };
 
@@ -67,7 +104,14 @@ export default function AdminPage() {
       const res = await fetch('/api/scrape-wod');
       const json = await res.json();
       if (!res.ok) setScrapeErr(json.error ?? 'Scrape failed');
-      else setScrapeMsg(`Done — saved ${json.saved} WOD(s) for: ${(json.dates ?? []).join(', ') || 'none'}`);
+      else {
+        if (json.saved > 0) {
+          setScrapeMsg(`✓ Saved ${json.saved} WOD(s) for: ${(json.dates ?? []).join(', ')}`);
+          loadExisting(wodDate);
+        } else {
+          setScrapeErr(json.message ?? 'No WODs found on vfuae.com');
+        }
+      }
     } catch (e: any) {
       setScrapeErr(e.message ?? 'Network error');
     }
@@ -81,18 +125,29 @@ export default function AdminPage() {
 
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold text-white">Admin</h1>
+        <a
+          href="https://vfuae.com/wod/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1.5 rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+        >
+          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+          </svg>
+          vfuae.com/wod
+        </a>
       </div>
 
       {/* Auto-scrape */}
       <section className="rounded-2xl border border-white/10 bg-[#0a0f1e] p-5">
         <h2 className="mb-1 text-sm font-semibold text-slate-300">Auto-scrape from vfuae.com</h2>
-        <p className="mb-4 text-xs text-slate-500">Runs automatically at 6 AM and 2 PM (UAE time). Trigger manually here to test.</p>
+        <p className="mb-4 text-xs text-slate-500">Runs automatically at 6 AM and 2 PM UAE time. Trigger manually to test.</p>
         <button
           onClick={handleScrape}
           disabled={scraping}
           className="rounded-xl bg-white px-5 py-2 text-sm font-semibold text-black hover:bg-slate-200 disabled:opacity-40"
         >
-          {scraping ? 'Scraping...' : 'Scrape Now'}
+          {scraping ? 'Scraping…' : 'Scrape Now'}
         </button>
         {scrapeMsg && <p className="mt-3 text-sm text-green-400">{scrapeMsg}</p>}
         {scrapeErr && <p className="mt-3 text-sm text-red-400">{scrapeErr}</p>}
@@ -107,9 +162,29 @@ export default function AdminPage() {
           <label className="mb-1 block text-xs text-slate-500">Date</label>
           <input
             type="date" value={wodDate}
-            onChange={(e) => { setWodDate(e.target.value); setSaveMsg(null); setSaveErr(null); }}
+            onChange={(e) => handleDateChange(e.target.value)}
             className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2 text-sm text-slate-100 focus:outline-none"
           />
+          {/* Existing WOD indicator */}
+          <div className="mt-2 min-h-[20px]">
+            {loadingExisting && (
+              <p className="text-xs text-slate-600">Checking for existing WOD…</p>
+            )}
+            {!loadingExisting && existingWod && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-amber-400">⚠ WOD already saved for this date</span>
+                <button
+                  onClick={handleLoadExisting}
+                  className="text-xs text-slate-400 underline hover:text-slate-200"
+                >
+                  Load to edit
+                </button>
+              </div>
+            )}
+            {!loadingExisting && !existingWod && (
+              <p className="text-xs text-slate-600">No WOD saved for this date yet</p>
+            )}
+          </div>
         </div>
 
         {/* WOD text */}
@@ -133,7 +208,9 @@ export default function AdminPage() {
 
         {/* Type override */}
         <div className="mb-4">
-          <label className="mb-1 block text-xs text-slate-500">Workout type override <span className="text-slate-700">(leave blank to auto-detect)</span></label>
+          <label className="mb-1 block text-xs text-slate-500">
+            Workout type override <span className="text-slate-700">(leave blank to auto-detect)</span>
+          </label>
           <div className="flex gap-2">
             {(['', 'TIME', 'AMRAP', 'NO_SCORE'] as const).map((t) => (
               <button
@@ -181,7 +258,7 @@ export default function AdminPage() {
           disabled={saving || !wodText.trim()}
           className="w-full rounded-xl bg-white py-2.5 text-sm font-semibold text-black hover:bg-slate-200 disabled:opacity-40"
         >
-          {saving ? 'Saving...' : 'Save WOD'}
+          {saving ? 'Saving…' : existingWod ? 'Update WOD' : 'Save WOD'}
         </button>
         {saveMsg && <p className="mt-3 text-sm text-green-400">{saveMsg}</p>}
         {saveErr && <p className="mt-3 text-sm text-red-400">{saveErr}</p>}
