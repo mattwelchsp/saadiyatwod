@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { parse } from 'node-html-parser';
 import { createServiceClient } from '../../../lib/supabase';
 
-const WOD_URL = 'https://vfuae.com/wod/';
 const TZ = process.env.APP_TIMEZONE ?? 'Asia/Dubai';
+const BASE = 'https://vfuae.com';
 
 function todayInTZ(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: TZ });
@@ -14,30 +13,21 @@ function tomorrowInTZ(): string {
   return d.toLocaleDateString('en-CA', { timeZone: TZ });
 }
 
-/** Parse DD/MM/YYYY → YYYY-MM-DD */
-function parseDDMMYYYY(s: string): string | null {
-  const m = /\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/.exec(s);
-  if (!m) return null;
-  const [, d, mo, y] = m;
-  return `${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`;
+/** Strip HTML tags from a string */
+function stripHtml(html: string): string {
+  return html
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&#8211;/g, '–')
+    .replace(/&#8217;/g, "'")
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 }
 
-/** Parse any recognisable date format → YYYY-MM-DD */
-function parseAnyDate(s: string): string | null {
-  if (!s) return null;
-  // DD/MM/YYYY (site format)
-  const ddmm = parseDDMMYYYY(s);
-  if (ddmm) return ddmm;
-  // ISO
-  const iso = /(\d{4}-\d{2}-\d{2})/.exec(s);
-  if (iso) return iso[1];
-  // Fallback to Date constructor (handles "February 22, 2026" etc.)
-  const d = new Date(s);
-  if (!isNaN(d.getTime())) return d.toLocaleDateString('en-CA', { timeZone: TZ });
-  return null;
-}
-
-/** Strip gym policy boilerplate that appears on every card */
+/** Strip gym policy boilerplate */
 function stripBoilerplate(text: string): string {
   return text
     .split('\n')
@@ -48,141 +38,210 @@ function stripBoilerplate(text: string): string {
         !l.startsWith('MORE THAN 5 MINUTES') &&
         !l.includes('NO ENTRY TO CLASS') &&
         !l.includes('BOOK YOUR CLASS') &&
-        l !== 'WOD' &&                        // card type label
-        !l.match(/^VOGUE FITNESS/)             // location header
+        l !== 'WOD' &&
+        !l.match(/^VOGUE FITNESS/)
       );
     })
     .join('\n')
     .trim();
 }
 
-async function fetchPage(url: string): Promise<string> {
-  const res = await fetch(url, {
-    headers: {
-      'User-Agent':
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-      Accept: 'text/html,application/xhtml+xml',
-    },
-    next: { revalidate: 0 },
-  });
-  if (!res.ok) throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
-  return res.text();
+/** Fetch JSON from a URL, return null on error */
+async function fetchJson(url: string): Promise<any | null> {
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        Accept: 'application/json',
+      },
+      next: { revalidate: 0 },
+    });
+    if (!res.ok) return null;
+    const ct = res.headers.get('content-type') ?? '';
+    if (!ct.includes('json')) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
 }
 
-async function scrapeWods(debug = false): Promise<{
+// ── Strategy 1: The Events Calendar (Tribe) REST API ──────────────────────────
+// Used by many CrossFit/fitness WordPress sites
+async function tryTribeEventsAPI(
+  today: string,
+  tomorrow: string,
+  debug: boolean
+): Promise<{ wods: { date: string; text: string }[]; debugInfo?: any }> {
+  const wods: { date: string; text: string }[] = [];
+  const debugLogs: any[] = [];
+
+  // Try fetching events for today and tomorrow
+  const urlsToTry = [
+    // With location filter
+    `${BASE}/wp-json/tribe/events/v1/events?per_page=50&start_date=${today}&end_date=${tomorrow}&search=saadiyat`,
+    // Without location filter — grab all and filter by location field
+    `${BASE}/wp-json/tribe/events/v1/events?per_page=50&start_date=${today}&end_date=${tomorrow}`,
+    // Wider range in case dates are off
+    `${BASE}/wp-json/tribe/events/v1/events?per_page=50`,
+  ];
+
+  for (const url of urlsToTry) {
+    const data = await fetchJson(url);
+    if (debug) debugLogs.push({ url, response: data ? JSON.stringify(data).slice(0, 500) : 'null/error' });
+    if (!data) continue;
+
+    const events: any[] = data.events ?? (Array.isArray(data) ? data : []);
+    if (events.length === 0) continue;
+
+    for (const ev of events) {
+      // Extract date
+      const eventDate: string =
+        ev.start_date?.slice(0, 10) ??
+        ev.start_date_details?.year
+          ? `${ev.start_date_details?.year}-${String(ev.start_date_details?.month).padStart(2, '0')}-${String(ev.start_date_details?.day).padStart(2, '0')}`
+          : '';
+
+      if (eventDate !== today && eventDate !== tomorrow) continue;
+
+      // Check if this event is for Saadiyat location
+      const title: string = ev.title ?? '';
+      const description: string = stripHtml(ev.description ?? '');
+      const venue: string = ev.venue?.venue ?? '';
+      const categories: string[] = (ev.categories ?? []).map((c: any) => c.name ?? '');
+      const allText = [title, description, venue, ...categories].join(' ').toLowerCase();
+
+      if (!allText.includes('saadiyat') && !allText.includes('wod')) continue;
+
+      const clean = stripBoilerplate(`${title}\n${description}`);
+      if (clean.length > 10 && !wods.find((w) => w.date === eventDate)) {
+        wods.push({ date: eventDate, text: clean });
+      }
+    }
+
+    if (wods.length > 0) break; // Found what we need
+  }
+
+  return { wods, debugInfo: debug ? { strategy: 'tribe-events', logs: debugLogs } : undefined };
+}
+
+// ── Strategy 2: WordPress REST API posts ──────────────────────────────────────
+async function tryWpPostsAPI(
+  today: string,
+  tomorrow: string,
+  debug: boolean
+): Promise<{ wods: { date: string; text: string }[]; debugInfo?: any }> {
+  const wods: { date: string; text: string }[] = [];
+  const debugLogs: any[] = [];
+
+  const urlsToTry = [
+    // Posts with WOD search term, recent
+    `${BASE}/wp-json/wp/v2/posts?per_page=20&search=wod&orderby=date&order=desc`,
+    // All recent posts (last 2 days worth)
+    `${BASE}/wp-json/wp/v2/posts?per_page=20&after=${today}T00:00:00&orderby=date&order=desc`,
+    // Try a custom post type "wod" if it exists
+    `${BASE}/wp-json/wp/v2/wod?per_page=20&orderby=date&order=desc`,
+  ];
+
+  for (const url of urlsToTry) {
+    const data = await fetchJson(url);
+    if (debug) debugLogs.push({ url, response: data ? JSON.stringify(data).slice(0, 500) : 'null/error' });
+    if (!Array.isArray(data) || data.length === 0) continue;
+
+    for (const post of data) {
+      const postDate: string = (post.date ?? '').slice(0, 10);
+      if (postDate !== today && postDate !== tomorrow) continue;
+
+      const title: string = post.title?.rendered ?? '';
+      const content: string = stripHtml(post.content?.rendered ?? '');
+      const allText = [title, content].join(' ').toLowerCase();
+
+      if (!allText.includes('saadiyat') && !allText.includes('wod')) continue;
+
+      const clean = stripBoilerplate(`${title}\n${content}`);
+      if (clean.length > 10 && !wods.find((w) => w.date === postDate)) {
+        wods.push({ date: postDate, text: clean });
+      }
+    }
+
+    if (wods.length > 0) break;
+  }
+
+  return { wods, debugInfo: debug ? { strategy: 'wp-posts', logs: debugLogs } : undefined };
+}
+
+// ── Strategy 3: WordPress REST API — discover custom post types ───────────────
+async function tryWpTypesDiscovery(
+  today: string,
+  tomorrow: string,
+  debug: boolean
+): Promise<{ wods: { date: string; text: string }[]; debugInfo?: any }> {
+  const wods: { date: string; text: string }[] = [];
+  const debugLogs: any[] = [];
+
+  // Discover what post types / namespaces exist
+  const types = await fetchJson(`${BASE}/wp-json/wp/v2/types`);
+  if (debug) debugLogs.push({ url: `${BASE}/wp-json/wp/v2/types`, response: types ? JSON.stringify(types).slice(0, 1000) : 'null' });
+
+  const namespaces = await fetchJson(`${BASE}/wp-json/`);
+  if (debug) debugLogs.push({ url: `${BASE}/wp-json/`, namespaces: namespaces?.namespaces ?? 'null' });
+
+  // If we found custom post types, try fetching from them
+  if (types && typeof types === 'object') {
+    for (const [slug, typeInfo] of Object.entries(types)) {
+      const info = typeInfo as any;
+      const restBase: string = info?.rest_base ?? slug;
+      if (['post', 'page', 'attachment', 'revision', 'nav_menu_item'].includes(slug)) continue;
+
+      if (debug) debugLogs.push({ trying: `${BASE}/wp-json/wp/v2/${restBase}` });
+
+      const data = await fetchJson(`${BASE}/wp-json/wp/v2/${restBase}?per_page=20&orderby=date&order=desc`);
+      if (!Array.isArray(data) || data.length === 0) continue;
+
+      for (const item of data) {
+        const itemDate: string = (item.date ?? '').slice(0, 10);
+        if (itemDate !== today && itemDate !== tomorrow) continue;
+
+        const title: string = item.title?.rendered ?? '';
+        const content: string = stripHtml(item.content?.rendered ?? '');
+        const clean = stripBoilerplate(`${title}\n${content}`);
+
+        if (clean.length > 10 && !wods.find((w) => w.date === itemDate)) {
+          wods.push({ date: itemDate, text: clean });
+        }
+      }
+    }
+  }
+
+  return { wods, debugInfo: debug ? { strategy: 'wp-types-discovery', logs: debugLogs } : undefined };
+}
+
+// ── Main scrape function ───────────────────────────────────────────────────────
+async function scrapeWods(debug: boolean): Promise<{
   wods: { date: string; text: string }[];
   debugInfo?: any;
 }> {
   const today = todayInTZ();
   const tomorrow = tomorrowInTZ();
-  const targetDates = new Set([today, tomorrow]);
+  const allDebug: any[] = [];
 
-  // Try Saadiyat-filtered URL first, then bare URL
-  const urlsToTry = [
-    'https://vfuae.com/wod/?location=saadiyat',
-    'https://vfuae.com/wod/?gym=saadiyat',
-    'https://vfuae.com/wod/?location=saadiyat-island',
-    WOD_URL,
-  ];
+  // Try each strategy in order
+  const { wods: w1, debugInfo: d1 } = await tryTribeEventsAPI(today, tomorrow, debug);
+  if (debug) allDebug.push(d1);
+  if (w1.length > 0) return { wods: w1, debugInfo: debug ? { today, tomorrow, strategies: allDebug } : undefined };
 
-  let html = '';
-  let usedUrl = WOD_URL;
+  const { wods: w2, debugInfo: d2 } = await tryWpPostsAPI(today, tomorrow, debug);
+  if (debug) allDebug.push(d2);
+  if (w2.length > 0) return { wods: w2, debugInfo: debug ? { today, tomorrow, strategies: allDebug } : undefined };
 
-  for (const url of urlsToTry) {
-    try {
-      html = await fetchPage(url);
-      usedUrl = url;
-      break;
-    } catch {
-      continue;
-    }
-  }
+  const { wods: w3, debugInfo: d3 } = await tryWpTypesDiscovery(today, tomorrow, debug);
+  if (debug) allDebug.push(d3);
+  if (w3.length > 0) return { wods: w3, debugInfo: debug ? { today, tomorrow, strategies: allDebug } : undefined };
 
-  if (!html) throw new Error('Could not fetch any WOD URL');
-
-  const root = parse(html);
-  const results: { date: string; text: string }[] = [];
-
-  // ── Strategy 1: Find any container that mentions "Saadiyat" ──────────────────
-  //
-  // Walk every block-level element. When we find one containing "saadiyat"
-  // (case-insensitive), look for a DD/MM/YYYY date inside or nearby, then
-  // grab the text content as the WOD.
-  //
-  const allBlocks = root.querySelectorAll(
-    'article, .wod-card, .tribe_events_cat-wod, .post, .entry, .card, [class*="wod"], [class*="event"], [class*="post"]'
-  );
-
-  const debugBlocks: any[] = [];
-
-  for (const block of allBlocks) {
-    const text = block.innerText ?? '';
-    if (!text.toLowerCase().includes('saadiyat')) continue;
-
-    // Find date within this block
-    const parsedDate = parseAnyDate(text);
-    if (!parsedDate || !targetDates.has(parsedDate)) continue;
-
-    const clean = stripBoilerplate(text);
-    if (clean.length < 10) continue;
-
-    if (debug) debugBlocks.push({ selector: block.tagName, classes: block.classNames, text: text.slice(0, 300) });
-
-    // Avoid duplicates
-    if (!results.find((r) => r.date === parsedDate)) {
-      results.push({ date: parsedDate, text: clean });
-    }
-  }
-
-  // ── Strategy 2: Scan all text nodes for DD/MM/YYYY near "Saadiyat" ───────────
-  if (results.length === 0) {
-    const allEls = root.querySelectorAll('div, section, li, p, td');
-
-    for (const el of allEls) {
-      const text = el.innerText ?? '';
-      if (!text.toLowerCase().includes('saadiyat')) continue;
-
-      const parsedDate = parseAnyDate(text);
-      if (!parsedDate || !targetDates.has(parsedDate)) continue;
-
-      const clean = stripBoilerplate(text);
-      if (clean.length < 10) continue;
-      if (!results.find((r) => r.date === parsedDate)) {
-        results.push({ date: parsedDate, text: clean });
-      }
-    }
-  }
-
-  // ── Strategy 3: Find all DD/MM/YYYY dates on page, grab their sibling text ───
-  if (results.length === 0) {
-    const bodyText = root.querySelector('body')?.innerText ?? '';
-    const dateRegex = /\b\d{1,2}\/\d{1,2}\/\d{4}\b/g;
-    let match: RegExpExecArray | null;
-
-    while ((match = dateRegex.exec(bodyText)) !== null) {
-      const parsedDate = parseDDMMYYYY(match[0]);
-      if (!parsedDate || !targetDates.has(parsedDate)) continue;
-
-      // Grab ~500 chars after the date as WOD text
-      const snippet = bodyText.slice(match.index, match.index + 500);
-      const clean = stripBoilerplate(snippet);
-      if (clean.length > 10 && !results.find((r) => r.date === parsedDate)) {
-        results.push({ date: parsedDate, text: clean });
-      }
-    }
-  }
-
-  const debugInfo = debug
-    ? {
-        usedUrl,
-        today,
-        tomorrow,
-        blocksWithSaadiyat: debugBlocks,
-        htmlSnippet: html.slice(0, 3000),
-      }
-    : undefined;
-
-  return { wods: results, debugInfo };
+  return {
+    wods: [],
+    debugInfo: debug ? { today, tomorrow, strategies: allDebug, note: 'All strategies returned 0 results. Check the debug logs to see what APIs returned.' } : undefined,
+  };
 }
 
 // ── Route handler ─────────────────────────────────────────────────────────────
