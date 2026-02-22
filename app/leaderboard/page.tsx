@@ -138,7 +138,7 @@ export default function LeaderboardPage() {
       setScores([]);
     }
     setLoading(false);
-  }, [router]);
+  }, []);
 
   useEffect(() => { loadDate(date); }, [date, loadDate]);
 
