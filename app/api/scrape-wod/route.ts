@@ -13,7 +13,6 @@ function tomorrowInTZ(): string {
   return d.toLocaleDateString('en-CA', { timeZone: TZ });
 }
 
-/** Strip HTML tags */
 function stripHtml(html: string): string {
   return html
     .replace(/<[^>]+>/g, ' ')
@@ -27,7 +26,6 @@ function stripHtml(html: string): string {
     .trim();
 }
 
-/** Strip gym policy boilerplate */
 function stripBoilerplate(text: string): string {
   return text
     .split('\n')
@@ -64,9 +62,11 @@ async function fetchJson(url: string): Promise<any | null> {
   }
 }
 
-// ── Strategy 1: Modern Events Calendar (mec/v1) ───────────────────────────────
-// vfuae.com uses the MEC plugin — confirmed by /wp-json/ namespaces list
-async function tryMecAPI(
+// ── Strategy 1: listo/v1 — custom WOD plugin ─────────────────────────────────
+// The /wp-json/ discovery showed listo/v1 has a dynamic route:
+//   /listo/v1/(?P<type>[a-z0-9_-]+)
+// We probe likely type names to find the WOD data.
+async function tryListoAPI(
   today: string,
   tomorrow: string,
   debug: boolean
@@ -74,79 +74,85 @@ async function tryMecAPI(
   const wods: { date: string; text: string }[] = [];
   const logs: any[] = [];
 
-  // MEC REST API endpoints to try
-  const urlsToTry = [
-    // Standard MEC events list with date range
-    `${BASE}/wp-json/mec/v1/events?start=${today}&end=${tomorrow}`,
-    `${BASE}/wp-json/mec/v1/events?from=${today}&to=${tomorrow}`,
-    `${BASE}/wp-json/mec/v1/events?date=${today}`,
-    // MEC events custom post type via wp/v2
-    `${BASE}/wp-json/wp/v2/mec-events?per_page=50&orderby=date&order=desc&after=${today}T00:00:00`,
-    `${BASE}/wp-json/wp/v2/mec-events?per_page=50&orderby=date&order=desc`,
-    // MEC might use a "single_day" param
-    `${BASE}/wp-json/mec/v1/events?single_day=${today}`,
-    // Just grab all recent events
-    `${BASE}/wp-json/mec/v1/events?per_page=50`,
-    `${BASE}/wp-json/mec/v1/events`,
+  // Probe every plausible type name
+  const typesToTry = [
+    'wod', 'wods', 'workout', 'workouts', 'daily-wod', 'daily',
+    'crossfit', 'class', 'classes', 'schedule', 'programming',
+    'saadiyat', 'location', 'post', 'entry', 'entries',
   ];
 
-  for (const url of urlsToTry) {
+  for (const type of typesToTry) {
+    const url = `${BASE}/wp-json/listo/v1/${type}`;
     const data = await fetchJson(url);
-    const preview = data ? JSON.stringify(data).slice(0, 600) : 'null/error';
-    if (debug) logs.push({ url, response: preview });
+    if (debug) logs.push({ url, response: data ? JSON.stringify(data).slice(0, 400) : 'null/error' });
     if (!data) continue;
 
-    // MEC can return { events: [...] } or just [...]
-    const events: any[] = data.events ?? data.data ?? (Array.isArray(data) ? data : []);
-    if (events.length === 0) continue;
+    // Got a non-null response — this type exists! Log it fully in debug mode
+    if (debug) logs.push({ HIT: type, fullResponse: JSON.stringify(data).slice(0, 2000) });
 
-    if (debug) logs.push({ found: events.length, firstEvent: JSON.stringify(events[0]).slice(0, 400) });
+    // Try to extract WOD entries from whatever shape the data is
+    const items: any[] = Array.isArray(data) ? data : (data.data ?? data.items ?? data.results ?? data.wods ?? []);
 
-    for (const ev of events) {
-      // MEC stores dates differently — try multiple fields
-      const eventDate: string =
-        ev.date?.start?.date?.slice(0, 10) ??
-        ev.start?.slice(0, 10) ??
-        ev.start_date?.slice(0, 10) ??
-        ev.date?.slice(0, 10) ??
-        (ev.date?.start ? String(ev.date.start).slice(0, 10) : '') ??
+    for (const item of items) {
+      // Try every possible date field
+      const itemDate: string =
+        item.date?.slice(0, 10) ??
+        item.wod_date?.slice(0, 10) ??
+        item.start_date?.slice(0, 10) ??
+        item.post_date?.slice(0, 10) ??
+        item.event_date?.slice(0, 10) ??
         '';
 
-      if (eventDate && eventDate !== today && eventDate !== tomorrow) continue;
+      if (itemDate && itemDate !== today && itemDate !== tomorrow) continue;
 
-      const title: string = stripHtml(ev.title ?? ev.post_title ?? '');
-      const content: string = stripHtml(
-        ev.content ?? ev.post_content ?? ev.description ?? ev.excerpt ?? ''
+      // Try every possible location field
+      const locationText = [
+        item.location, item.venue, item.gym, item.branch, item.site,
+        item.location_name, item.location?.name,
+      ].filter(Boolean).join(' ').toLowerCase();
+
+      if (locationText && !locationText.includes('saadiyat')) continue;
+
+      // Extract content
+      const title = stripHtml(item.title ?? item.name ?? item.post_title ?? item.wod_title ?? '');
+      const content = stripHtml(
+        item.content ?? item.description ?? item.workout ?? item.post_content ??
+        item.text ?? item.body ?? ''
       );
-      const location: string = ev.location?.name ?? ev.venue ?? ev.location ?? '';
-      const allText = [title, content, location].join(' ').toLowerCase();
-
-      // Must relate to Saadiyat or be a WOD entry
-      if (!allText.includes('saadiyat') && !allText.includes('wod')) {
-        // If no date filter worked, try title-based WOD detection
-        if (!title.toLowerCase().includes('crossfit') && !content.toLowerCase().includes('amrap')) continue;
-      }
-
       const clean = stripBoilerplate(`${title}\n${content}`);
       if (clean.length > 10) {
-        const useDate = eventDate || today;
-        if (!wods.find((w) => w.date === useDate)) {
-          wods.push({ date: useDate, text: clean });
-        }
+        wods.push({ date: itemDate || today, text: clean });
       }
     }
 
     if (wods.length > 0) break;
   }
 
-  return {
-    wods,
-    debugInfo: debug ? { strategy: 'mec/v1', logs } : undefined,
-  };
+  // Also try with query params on the base wod type
+  if (wods.length === 0) {
+    const urlsWithParams = [
+      `${BASE}/wp-json/listo/v1/wod?date=${today}&location=saadiyat`,
+      `${BASE}/wp-json/listo/v1/wod?date=${today}`,
+      `${BASE}/wp-json/listo/v1/wod?location=saadiyat`,
+      `${BASE}/wp-json/listo/v1/wod?per_page=10`,
+      `${BASE}/wp-json/listo/v1/wods?date=${today}`,
+    ];
+    for (const url of urlsWithParams) {
+      const data = await fetchJson(url);
+      if (debug) logs.push({ url, response: data ? JSON.stringify(data).slice(0, 400) : 'null/error' });
+      if (!data) continue;
+      if (debug && data && JSON.stringify(data) !== '[]' && JSON.stringify(data) !== '{}') {
+        logs.push({ HIT_WITH_PARAMS: url, fullResponse: JSON.stringify(data).slice(0, 2000) });
+      }
+    }
+  }
+
+  return { wods, debugInfo: debug ? { strategy: 'listo/v1', logs } : undefined };
 }
 
-// ── Strategy 2: mec-events custom post type ───────────────────────────────────
-async function tryMecPostType(
+// ── Strategy 2: WordPress custom post type "wod" ──────────────────────────────
+// Check if they registered a plain WP REST endpoint for WODs
+async function tryWpWodPostType(
   today: string,
   tomorrow: string,
   debug: boolean
@@ -154,58 +160,33 @@ async function tryMecPostType(
   const wods: { date: string; text: string }[] = [];
   const logs: any[] = [];
 
-  const url = `${BASE}/wp-json/wp/v2/mec-events?per_page=50&orderby=modified&order=desc`;
-  const data = await fetchJson(url);
-  if (debug) logs.push({ url, response: data ? JSON.stringify(data).slice(0, 800) : 'null/error' });
+  const slugsToTry = ['wod', 'wods', 'daily-wod', 'workout', 'workouts'];
 
-  if (Array.isArray(data) && data.length > 0) {
-    if (debug) logs.push({ count: data.length, firstItem: JSON.stringify(data[0]).slice(0, 600) });
+  for (const slug of slugsToTry) {
+    const url = `${BASE}/wp-json/wp/v2/${slug}?per_page=10&orderby=date&order=desc`;
+    const data = await fetchJson(url);
+    if (debug) logs.push({ url, response: data ? JSON.stringify(data).slice(0, 400) : 'null/error' });
+    if (!Array.isArray(data) || data.length === 0) continue;
+
+    if (debug) logs.push({ HIT: slug, count: data.length, sample: JSON.stringify(data[0]).slice(0, 600) });
 
     for (const item of data) {
-      const postDate: string = (item.date ?? '').slice(0, 10);
-      const meta = item.meta ?? {};
-      // MEC stores event start in meta fields
-      const mecStart: string =
-        meta.mec_start_date ??
-        meta.mec_start_datetime ??
-        '';
-      const useDate = mecStart ? mecStart.slice(0, 10) : postDate;
+      const postDate = (item.date ?? '').slice(0, 10);
+      if (postDate !== today && postDate !== tomorrow) continue;
 
-      if (useDate && useDate !== today && useDate !== tomorrow) continue;
-
-      const title: string = stripHtml(item.title?.rendered ?? '');
-      const content: string = stripHtml(item.content?.rendered ?? '');
+      const title = stripHtml(item.title?.rendered ?? '');
+      const content = stripHtml(item.content?.rendered ?? '');
       const allText = [title, content].join(' ').toLowerCase();
-
       if (!allText.includes('saadiyat') && !allText.includes('wod') && !allText.includes('crossfit')) continue;
 
       const clean = stripBoilerplate(`${title}\n${content}`);
-      if (clean.length > 10 && !wods.find((w) => w.date === (useDate || today))) {
-        wods.push({ date: useDate || today, text: clean });
-      }
+      if (clean.length > 10) wods.push({ date: postDate, text: clean });
     }
+
+    if (wods.length > 0) break;
   }
 
-  return { wods, debugInfo: debug ? { strategy: 'mec-post-type', logs } : undefined };
-}
-
-// ── Strategy 3: listo/v1 (the other custom namespace on their site) ────────────
-async function tryListoAPI(
-  today: string,
-  _tomorrow: string,
-  debug: boolean
-): Promise<{ wods: { date: string; text: string }[]; debugInfo?: any }> {
-  const logs: any[] = [];
-
-  // Probe what listo/v1 offers
-  const root = await fetchJson(`${BASE}/wp-json/listo/v1`);
-  if (debug) logs.push({ url: `${BASE}/wp-json/listo/v1`, response: root ? JSON.stringify(root).slice(0, 600) : 'null/error' });
-
-  const events = await fetchJson(`${BASE}/wp-json/listo/v1/events?date=${today}`);
-  if (debug) logs.push({ url: `${BASE}/wp-json/listo/v1/events?date=${today}`, response: events ? JSON.stringify(events).slice(0, 600) : 'null/error' });
-
-  const wods: { date: string; text: string }[] = [];
-  return { wods, debugInfo: debug ? { strategy: 'listo/v1', logs } : undefined };
+  return { wods, debugInfo: debug ? { strategy: 'wp-wod-post-type', logs } : undefined };
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -214,22 +195,18 @@ async function scrapeWods(debug: boolean) {
   const tomorrow = tomorrowInTZ();
   const allDebug: any[] = [];
 
-  const { wods: w1, debugInfo: d1 } = await tryMecAPI(today, tomorrow, debug);
+  const { wods: w1, debugInfo: d1 } = await tryListoAPI(today, tomorrow, debug);
   if (debug) allDebug.push(d1);
   if (w1.length > 0) return { wods: w1, debugInfo: debug ? { today, tomorrow, strategies: allDebug } : undefined };
 
-  const { wods: w2, debugInfo: d2 } = await tryMecPostType(today, tomorrow, debug);
+  const { wods: w2, debugInfo: d2 } = await tryWpWodPostType(today, tomorrow, debug);
   if (debug) allDebug.push(d2);
   if (w2.length > 0) return { wods: w2, debugInfo: debug ? { today, tomorrow, strategies: allDebug } : undefined };
-
-  const { wods: w3, debugInfo: d3 } = await tryListoAPI(today, tomorrow, debug);
-  if (debug) allDebug.push(d3);
-  if (w3.length > 0) return { wods: w3, debugInfo: debug ? { today, tomorrow, strategies: allDebug } : undefined };
 
   return {
     wods: [],
     debugInfo: debug
-      ? { today, tomorrow, strategies: allDebug, note: 'All strategies returned 0 WODs. See strategy logs for raw API responses.' }
+      ? { today, tomorrow, strategies: allDebug, note: 'No WODs found. Paste this output to investigate further.' }
       : undefined,
   };
 }
@@ -251,7 +228,7 @@ export async function GET(req: NextRequest) {
     }
 
     if (wods.length === 0) {
-      return NextResponse.json({ message: 'No Saadiyat WODs found — try ?debug=1 to inspect', saved: 0 });
+      return NextResponse.json({ message: 'No Saadiyat WODs found — try ?debug=1', saved: 0 });
     }
 
     const db = createServiceClient();
