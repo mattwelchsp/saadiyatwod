@@ -265,18 +265,17 @@ export default function HomePage() {
           <section className="rounded-2xl border border-white/10 bg-[#0a0f1e] p-5">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-sm font-semibold text-slate-300">Today&apos;s WOD</h2>
-              {type !== 'UNKNOWN' && (
+              {(type === 'TIME' || type === 'AMRAP') && (
                 <span className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${
                   type === 'TIME' ? 'border-blue-500/30 bg-blue-500/10 text-blue-300' :
-                  type === 'AMRAP' ? 'border-orange-500/30 bg-orange-500/10 text-orange-300' :
-                  'border-slate-500/30 bg-slate-500/10 text-slate-400'
+                  'border-orange-500/30 bg-orange-500/10 text-orange-300'
                 }`}>
                   {type}
                 </span>
               )}
             </div>
             {wod ? (
-              <pre className="whitespace-pre-wrap text-sm leading-relaxed text-slate-100">{wod.wod_text}</pre>
+              <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-100">{wod.wod_text}</p>
             ) : (
               <p className="text-sm text-slate-500">No WOD posted yet.</p>
             )}
@@ -293,18 +292,17 @@ export default function HomePage() {
           <section className="rounded-2xl border border-white/10 bg-[#0a0f1e] p-5">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-sm font-semibold text-slate-300">Today&apos;s WOD</h2>
-              {type !== 'UNKNOWN' && (
+              {(type === 'TIME' || type === 'AMRAP') && (
                 <span className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${
                   type === 'TIME' ? 'border-blue-500/30 bg-blue-500/10 text-blue-300' :
-                  type === 'AMRAP' ? 'border-orange-500/30 bg-orange-500/10 text-orange-300' :
-                  'border-slate-500/30 bg-slate-500/10 text-slate-400'
+                  'border-orange-500/30 bg-orange-500/10 text-orange-300'
                 }`}>
                   {type}
                 </span>
               )}
             </div>
             {wod ? (
-              <pre className="whitespace-pre-wrap text-sm leading-relaxed text-slate-100">{wod.wod_text}</pre>
+              <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-100">{wod.wod_text}</p>
             ) : (
               <p className="text-sm text-slate-500">No WOD posted yet.</p>
             )}
