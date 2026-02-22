@@ -481,6 +481,7 @@ export default function HomePage() {
   const selectedIsSaturday = isSaturday(selectedDate);
 
   if (selectedIsWeekend) {
+    const weekendType = effectiveType(wod);
     return (
       <main className="mx-auto flex min-h-screen w-full max-w-lg flex-col gap-5 bg-black px-4 py-10 pb-28 text-slate-100">
         {header}
@@ -500,6 +501,15 @@ export default function HomePage() {
             </>
           )}
         </div>
+        <WodCard
+          wod={wod}
+          tomorrowWod={isToday ? tomorrowWod : null}
+          date={selectedDate}
+          isToday={isToday}
+          tab={wodTab}
+          onTabChange={setWodTab}
+          type={weekendType}
+        />
         <BottomNav />
       </main>
     );

@@ -235,11 +235,12 @@ export default function MonthlyPage() {
         <button onClick={nextMonth} disabled={atMax} className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 text-slate-400 hover:text-white disabled:opacity-30">›</button>
       </div>
 
-      {/* Points key */}
-      <div className="flex justify-center gap-4 text-xs text-slate-500">
-        <span>🥇 = 3 pts</span>
-        <span>🥈 = 2 pts</span>
-        <span>🥉 = 1 pt</span>
+      {/* Explanation */}
+      <div className="rounded-2xl border border-white/10 bg-[#0a0f1e] px-4 py-3 text-center">
+        <p className="text-xs text-slate-400">
+          Top 3 finishers on each daily WOD earn points — 🥇 3 pts, 🥈 2 pts, 🥉 1 pt.
+          Whoever racks up the most points by end of month takes the crown.
+        </p>
       </div>
 
       {loading ? (
@@ -281,9 +282,9 @@ export default function MonthlyPage() {
                         <span className={`font-medium ${isMe ? 'text-white' : 'text-slate-200'}`}>{r.display_name}</span>
                       </div>
                     </td>
-                    <td className="px-3 py-3 text-center text-sm">{r.gold || '—'}</td>
-                    <td className="px-3 py-3 text-center text-sm">{r.silver || '—'}</td>
-                    <td className="px-3 py-3 text-center text-sm">{r.bronze || '—'}</td>
+                    <td className="px-3 py-3 text-center text-base">{r.gold || '—'}</td>
+                    <td className="px-3 py-3 text-center text-base">{r.silver || '—'}</td>
+                    <td className="px-3 py-3 text-center text-base">{r.bronze || '—'}</td>
                     <td className="px-4 py-3 text-right font-bold text-white">{r.total}</td>
                   </tr>
                 );
