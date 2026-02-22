@@ -25,6 +25,8 @@ function parseDDMMYYYY(s: string): string | null {
 /** Convert HTML content to clean plain text with preserved line breaks */
 function htmlToText(html: string): string {
   return html
+    // Empty or whitespace-only paragraphs (including &nbsp;) → blank line
+    .replace(/<p[^>]*>(\s|&nbsp;)*<\/p>/gi, '\n\n')
     // Paragraph/line breaks → newline
     .replace(/<\/p>\s*<p[^>]*>/gi, '\n')
     .replace(/<br\s*\/?>/gi, '\n')
@@ -41,10 +43,10 @@ function htmlToText(html: string): string {
     .replace(/&#8217;/g, "'")
     .replace(/&#8220;/g, '"')
     .replace(/&#8221;/g, '"')
-    // Tidy up whitespace
+    // Tidy up whitespace — preserve intentional blank lines
     .replace(/[ \t]+/g, ' ')          // collapse horizontal whitespace
-    .replace(/\n[ \t]+/g, '\n')       // trim leading space on each line
-    .replace(/[ \t]+\n/g, '\n')       // trim trailing space on each line
+    .replace(/\n /g, '\n')            // trim leading space on each line
+    .replace(/ \n/g, '\n')            // trim trailing space on each line
     .replace(/\n{3,}/g, '\n\n')       // max two consecutive blank lines
     .trim();
 }
