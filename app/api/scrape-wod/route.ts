@@ -22,21 +22,28 @@ function parseDDMMYYYY(s: string): string | null {
   return `${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`;
 }
 
-/** Strip HTML boilerplate lines */
+/** Strip gym policy boilerplate — works on both single-line and multi-line text */
 function stripBoilerplate(text: string): string {
   return text
+    // Remove inline boilerplate phrases regardless of case
+    .replace(/NO RESERVATION[^.]*\./gi, '')
+    .replace(/MORE THAN \d+ MINUTES? LATE[^.]*\./gi, '')
+    .replace(/MORE THAN \d+ MIN[^.]*ENTRY[^.]*\./gi, '')
+    .replace(/NO ENTRY TO CLASS\.?/gi, '')
+    .replace(/NO CLASS\.?\s*/gi, '')
+    .replace(/BOOK YOUR CLASS[^.]*\.?/gi, '')
+    // Clean up leftover punctuation/whitespace from removals
+    .replace(/,\s*,/g, ',')
+    .replace(/\.\s*\./g, '.')
     .split('\n')
     .map((l) => l.trim())
     .filter((l) => {
+      if (!l) return false;
       const u = l.toUpperCase();
       return (
-        l.length > 0 &&
-        !u.startsWith('NO RESERVATION') &&
-        !u.startsWith('MORE THAN 5 MIN') &&
-        !u.includes('NO CLASS ENTRY') &&
-        !u.includes('BOOK YOUR CLASS') &&
+        !u.match(/^VOGUE FITNESS/) &&
         u !== 'WOD' &&
-        !u.match(/^VOGUE FITNESS/)
+        u.length > 0
       );
     })
     .join('\n')
