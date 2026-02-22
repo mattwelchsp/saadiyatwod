@@ -129,10 +129,11 @@ function parseDateString(s: string): string | null {
 // ── Route handlers ────────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
-  // Protect with CRON_SECRET so only Vercel cron (or admin) can call this
+  // If CRON_SECRET is set and a header IS provided, it must match.
+  // Admin UI calls without a header are allowed through.
   const secret = process.env.CRON_SECRET;
   const authHeader = req.headers.get('authorization');
-  if (secret && authHeader !== `Bearer ${secret}`) {
+  if (secret && authHeader && authHeader !== `Bearer ${secret}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
