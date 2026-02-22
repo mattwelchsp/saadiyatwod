@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import { detectWorkoutTypeFromWodText, formatSeconds, WorkoutType } from '../../lib/wodType';
 import { todayInTZ, formatDateDisplay, isWeekend, shiftDate } from '../../lib/timezone';
@@ -87,7 +86,6 @@ function groupTeams(scores: Score[]): Score[][] {
 const MEDALS = ['🥇', '🥈', '🥉'];
 
 export default function LeaderboardPage() {
-  const router = useRouter();
   const today = todayInTZ();
 
   const [meId, setMeId] = useState<string | null>(null);
@@ -111,8 +109,7 @@ export default function LeaderboardPage() {
     setLoading(true);
 
     const { data: authData } = await supabase.auth.getUser();
-    if (!authData.user) { router.replace('/login'); return; }
-    setMeId(authData.user.id);
+    setMeId(authData.user?.id ?? null);
 
     const [wodRes, membersRes] = await Promise.all([
       supabase.from('wods').select('wod_date, wod_text, workout_type_override, is_team').eq('wod_date', d).maybeSingle(),
@@ -169,8 +166,7 @@ export default function LeaderboardPage() {
         </div>
         <button
           onClick={() => setDate((d) => shiftDate(d, 1))}
-          disabled={date >= today}
-          className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 text-slate-400 hover:text-white disabled:opacity-30"
+          className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 text-slate-400 hover:text-white"
         >
           ›
         </button>
@@ -194,14 +190,15 @@ export default function LeaderboardPage() {
           {/* WOD snippet */}
           <section className="rounded-2xl border border-white/10 bg-[#0a0f1e] p-4">
             <div className="mb-2 flex items-center gap-2">
-              <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${
-                type === 'TIME' ? 'border-blue-500/30 bg-blue-500/10 text-blue-300' :
-                type === 'AMRAP' ? 'border-orange-500/30 bg-orange-500/10 text-orange-300' :
-                'border-slate-500/30 bg-slate-500/10 text-slate-400'
-              }`}>{type}</span>
+              {(type === 'TIME' || type === 'AMRAP') && (
+                <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${
+                  type === 'TIME' ? 'border-blue-500/30 bg-blue-500/10 text-blue-300'
+                                 : 'border-orange-500/30 bg-orange-500/10 text-orange-300'
+                }`}>{type}</span>
+              )}
               {wod.is_team && <span className="rounded-full border border-purple-500/30 bg-purple-500/10 px-2 py-0.5 text-xs text-purple-300">TEAM</span>}
             </div>
-            <pre className="whitespace-pre-wrap text-xs leading-relaxed text-slate-400">{wod.wod_text}</pre>
+            <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-300">{wod.wod_text}</p>
           </section>
 
           {/* Leaderboard */}
