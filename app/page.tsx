@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+import confetti from 'canvas-confetti';
 import { supabase } from '../lib/supabase';
 import { detectWorkoutTypeFromWodText, parseTimeInput, formatSeconds, WorkoutType } from '../lib/wodType';
 import {
@@ -31,6 +32,7 @@ type Score = {
   is_rx: boolean;
   team_id: string | null;
   guest_names: string[];
+  guest_athlete_name: string | null;
   created_at: string;
   last_edited_at: string | null;
   display_name: string | null;
@@ -55,13 +57,17 @@ function scoreDisplay(s: Score, type: WorkoutType): string {
     if (s.amrap_input) return s.amrap_input;
     return '—';
   }
+  if (type === 'CALORIES') {
+    if (s.amrap_reps != null) return `${s.amrap_reps} cal`;
+    return '—';
+  }
   return '—';
 }
 
 function sortScores(rows: Score[], type: WorkoutType): Score[] {
   const copy = [...rows];
   if (type === 'TIME') return copy.sort((a, b) => (a.time_seconds ?? Infinity) - (b.time_seconds ?? Infinity));
-  if (type === 'AMRAP') {
+  if (type === 'AMRAP' || type === 'CALORIES') {
     return copy.sort((a, b) => {
       const av = (a.amrap_rounds ?? -1) * 10000 + (a.amrap_reps ?? -1);
       const bv = (b.amrap_rounds ?? -1) * 10000 + (b.amrap_reps ?? -1);
@@ -105,13 +111,49 @@ const MEDALS = ['🥇', '🥈', '🥉'];
 const DAY_LABELS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
 
 function TypeBadge({ type }: { type: WorkoutType }) {
-  if (type !== 'TIME' && type !== 'AMRAP') return null;
+  if (type !== 'TIME' && type !== 'AMRAP' && type !== 'CALORIES') return null;
+  const styles =
+    type === 'TIME'     ? 'border-blue-500/30 bg-blue-500/10 text-blue-300' :
+    type === 'CALORIES' ? 'border-yellow-500/30 bg-yellow-500/10 text-yellow-300' :
+                          'border-orange-500/30 bg-orange-500/10 text-orange-300';
   return (
-    <span className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${
-      type === 'TIME' ? 'border-blue-500/30 bg-blue-500/10 text-blue-300'
-                     : 'border-orange-500/30 bg-orange-500/10 text-orange-300'
-    }`}>{type}</span>
+    <span className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${styles}`}>{type}</span>
   );
+}
+
+// ── Streak helper ────────────────────────────────────────────────────────────
+
+function computeStreak(attendedSet: Set<string>, today: string): number {
+  let streak = 0;
+  const d = new Date(today + 'T12:00:00');
+  for (let i = 0; i < 365; i++) {
+    const dow = d.getDay(); // 0=Sun, 6=Sat
+    if (dow === 0 || dow === 6) {
+      d.setDate(d.getDate() - 1);
+      continue;
+    }
+    const dateStr = d.toLocaleDateString('en-CA');
+    if (attendedSet.has(dateStr)) {
+      streak++;
+      d.setDate(d.getDate() - 1);
+    } else if (dateStr === today) {
+      // Today not yet attended — don't break, just skip
+      d.setDate(d.getDate() - 1);
+    } else {
+      break;
+    }
+  }
+  return streak;
+}
+
+// ── Confetti helper ───────────────────────────────────────────────────────────
+
+function fireConfetti(placement: 1 | 2 | 3) {
+  const colors =
+    placement === 1 ? ['#FFD700', '#FFC200', '#FF8C00'] :
+    placement === 2 ? ['#C0C0C0', '#A8A8A8', '#E8E8E8'] :
+                      ['#CD7F32', '#A0522D', '#E8A060'];
+  confetti({ particleCount: placement === 1 ? 120 : placement === 2 ? 80 : 55, spread: 70, origin: { y: 0.65 }, colors });
 }
 
 // ── Teammate Picker ──────────────────────────────────────────────────────────
@@ -215,6 +257,9 @@ export default function HomePage() {
   const [meProfile, setMeProfile] = useState<Profile | null>(null);
   const [members, setMembers] = useState<Profile[]>([]);
 
+  // Cached profiles ref — avoids re-fetching on every date change
+  const profilesCacheRef = useRef<Profile[] | null>(null);
+
   // Data for selected date
   const [wod, setWod] = useState<Wod | null>(null);
   const [tomorrowWod, setTomorrowWod] = useState<Wod | null>(null);
@@ -225,11 +270,19 @@ export default function HomePage() {
   // WOD tab (only relevant when selectedDate === today)
   const [wodTab, setWodTab] = useState<'today' | 'tomorrow'>('today');
 
+  // Attendance + streak
+  const [attended, setAttended] = useState(false);
+  const [streak, setStreak] = useState(0);
+  const attendingRef = useRef(false);
+
   // Score submission
   const [isRx, setIsRx] = useState(true);
   const [timeInput, setTimeInput] = useState('');
   const [amrapRounds, setAmrapRounds] = useState('');
   const [amrapReps, setAmrapReps] = useState('');
+  const [calorieInput, setCalorieInput] = useState('');
+  const [forAthleteId, setForAthleteId] = useState('me'); // 'me' | uuid | 'guest'
+  const [forGuestName, setForGuestName] = useState('');
   const [teamMates, setTeamMates] = useState<string[]>([]);
   const [guestNames, setGuestNames] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -265,19 +318,40 @@ export default function HomePage() {
       });
   }, [weekDelta]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load WOD + scores whenever selectedDate changes
-  const loadDateData = useCallback(async (date: string) => {
+  // Load WOD + scores whenever selectedDate changes. Returns the mapped scores.
+  const loadDateData = useCallback(async (date: string): Promise<Score[]> => {
     setDataLoading(true);
-    setSubmitMsg(null); setSubmitErr(null);
+    setSubmitErr(null);
 
-    const [wodRes, scoreRows, allProfiles] = await Promise.all([
+    // Fetch wods + scores in parallel; use cached profiles when available
+    const profilesFetch = profilesCacheRef.current
+      ? Promise.resolve({ data: profilesCacheRef.current })
+      : supabase.from('profiles').select('id, display_name, avatar_url');
+
+    // Also fetch today's attendance record if logged in
+    const meIdRef = meId; // capture current value
+    const attendanceFetch = meIdRef
+      ? supabase.from('attendance').select('wod_date').eq('athlete_id', meIdRef).eq('wod_date', date).maybeSingle()
+      : Promise.resolve({ data: null });
+
+    const [wodRes, scoreRows, allProfiles, attendanceRes] = await Promise.all([
       supabase.from('wods').select('wod_date, wod_text, workout_type_override, is_team, team_size').eq('wod_date', date).maybeSingle(),
-      supabase.from('scores').select('id, athlete_id, time_seconds, time_input, amrap_rounds, amrap_reps, amrap_input, is_rx, team_id, guest_names, created_at, last_edited_at').eq('wod_date', date),
-      supabase.from('profiles').select('id, display_name, avatar_url'),
+      supabase.from('scores').select('id, athlete_id, time_seconds, time_input, amrap_rounds, amrap_reps, amrap_input, is_rx, team_id, guest_names, guest_athlete_name, created_at, last_edited_at').eq('wod_date', date),
+      profilesFetch,
+      attendanceFetch,
     ]);
+
+    // Cache profiles for future date changes
+    if (!profilesCacheRef.current && allProfiles.data) {
+      profilesCacheRef.current = allProfiles.data as Profile[];
+    }
 
     const wodData = wodRes.data as Wod | null;
     setWod(wodData);
+
+    // Set attendance state
+    const hasScore = (scoreRows.data ?? []).some((r: any) => r.athlete_id === meIdRef);
+    setAttended(!!(attendanceRes.data) || hasScore);
 
     // Also load tomorrow's WOD for the preview tab (only relevant when date === today)
     if (date === today) {
@@ -287,11 +361,13 @@ export default function HomePage() {
       setTomorrowWod(null);
     }
 
+    let mapped: Score[] = [];
     if (scoreRows.data) {
       const nameMap = new Map((allProfiles.data ?? []).map((m: any) => [m.id, m as Profile]));
-      const mapped: Score[] = scoreRows.data.map((r: any) => ({
+      mapped = scoreRows.data.map((r: any) => ({
         ...r,
         guest_names: r.guest_names ?? [],
+        guest_athlete_name: r.guest_athlete_name ?? null,
         display_name: nameMap.get(r.athlete_id)?.display_name ?? null,
         avatar_url: nameMap.get(r.athlete_id)?.avatar_url ?? null,
       }));
@@ -302,7 +378,8 @@ export default function HomePage() {
 
     setDataLoading(false);
     setInitialLoading(false);
-  }, [today, tomorrow]);
+    return mapped;
+  }, [today, tomorrow, meId]);
 
   useEffect(() => { loadDateData(selectedDate); }, [selectedDate, loadDateData]);
 
@@ -327,6 +404,10 @@ export default function HomePage() {
       const e = parseInt(amrapReps, 10);
       if (isNaN(r) || isNaN(e)) { setSubmitErr('Enter whole numbers for rounds and reps'); setSubmitting(false); return; }
       rounds = r; reps = e;
+    } else if (type === 'CALORIES') {
+      const cal = parseInt(calorieInput, 10);
+      if (isNaN(cal) || cal <= 0) { setSubmitErr('Enter calorie count'); setSubmitting(false); return; }
+      rounds = 0; reps = cal;
     }
 
     if (wod?.is_team) {
@@ -338,19 +419,28 @@ export default function HomePage() {
       }
     }
 
-    const teamIds = wod?.is_team ? Array.from(new Set([meId, ...teamMates])) : [meId];
+    // Determine effective athlete for individual WODs
+    const isGuestSubmission = !wod?.is_team && forAthleteId === 'guest';
+    const guestName = isGuestSubmission ? (forGuestName.trim() || 'Visitor') : null;
+    // For guest: generate a temp UUID (not linked to any profile, score shows guest name)
+    const effectiveAthleteId = !wod?.is_team
+      ? (forAthleteId === 'me' ? meId : forAthleteId === 'guest' ? crypto.randomUUID() : forAthleteId)
+      : meId;
+
+    const teamIds = wod?.is_team ? Array.from(new Set([meId, ...teamMates])) : [effectiveAthleteId!];
     const teamId = wod?.is_team ? crypto.randomUUID() : null;
     const cleanGuests = guestNames.filter((n) => n.trim());
 
     let anyError = false;
-    for (const athleteId of (wod?.is_team ? teamIds : [meId])) {
+    for (const athleteId of (wod?.is_team ? teamIds : [effectiveAthleteId!])) {
       const payload: any = {
         athlete_id: athleteId, entered_by: meId, submitted_by: meId,
         wod_date: today, is_rx: isRx, is_team: wod?.is_team ?? false, team_id: teamId,
         time_seconds: timeSeconds, time_input: timeSeconds != null ? timeInput : null,
         amrap_rounds: rounds, amrap_reps: reps,
-        amrap_input: rounds != null ? `${rounds}+${reps}` : null,
+        amrap_input: rounds != null && type === 'AMRAP' ? `${rounds}+${reps}` : null,
         guest_names: cleanGuests,
+        guest_athlete_name: guestName,
       };
       if (editMode && myScore) {
         const { error } = await supabase.from('scores').update({ ...payload, last_edited_at: new Date().toISOString() }).eq('id', myScore.id);
@@ -362,18 +452,71 @@ export default function HomePage() {
     }
 
     if (!anyError) {
-      setSubmitMsg('✓ Stay hard — David Goggins');
-      setTimeInput(''); setAmrapRounds(''); setAmrapReps('');
+      setTimeInput(''); setAmrapRounds(''); setAmrapReps(''); setCalorieInput('');
+      setForAthleteId('me'); setForGuestName('');
       setTeamMates([]); setGuestNames([]); setEditing(false);
-      await loadDateData(today);
+
+      // Log attendance for the submitter
+      await supabase.from('attendance').upsert({ athlete_id: meId, wod_date: today }, { onConflict: 'athlete_id,wod_date' });
+      setAttended(true);
+
+      // Reload scores to get fresh rankings
+      const freshScores = await loadDateData(today);
+
+      // Compute streak
+      const { data: attendRows } = await supabase.from('attendance').select('wod_date').eq('athlete_id', meId);
+      const attendedSet = new Set((attendRows ?? []).map((r: any) => r.wod_date as string));
+      attendedSet.add(today); // just logged
+      const newStreak = computeStreak(attendedSet, today);
+      setStreak(newStreak);
+
+      // Only show podium confetti + medal for the submitter's own score
+      const submittingForSelf = forAthleteId === 'me';
+      if (submittingForSelf && type !== 'NO_SCORE' && type !== 'UNKNOWN') {
+        const sorted = sortScores(freshScores, type);
+        const myIdx = sorted.findIndex((s) => s.athlete_id === meId);
+        const rank = myIdx >= 0 ? myIdx + 1 : null;
+        const name = meProfile?.display_name ?? '';
+        const stayHard = name ? `Stay Hard, ${name} 💪` : 'Stay Hard 💪';
+        const streakLine = newStreak > 1 ? ` · 🔥 ${newStreak}-day streak` : '';
+        if (rank === 1) { fireConfetti(1); setSubmitMsg(`🥇 1st place! ${stayHard}${streakLine}`); }
+        else if (rank === 2) { fireConfetti(2); setSubmitMsg(`🥈 2nd place! ${stayHard}${streakLine}`); }
+        else if (rank === 3) { fireConfetti(3); setSubmitMsg(`🥉 3rd place! ${stayHard}${streakLine}`); }
+        else setSubmitMsg(`✓ ${stayHard}${streakLine}`);
+      } else {
+        const name = meProfile?.display_name ?? '';
+        const stayHard = name ? `Stay Hard, ${name} 💪` : 'Stay Hard 💪';
+        const streakLine = newStreak > 1 ? ` · 🔥 ${newStreak}-day streak` : '';
+        setSubmitMsg(`✓ ${stayHard}${streakLine}`);
+      }
     }
     setSubmitting(false);
+  };
+
+  const handleAttendance = async () => {
+    if (!meId || attendingRef.current) return;
+    attendingRef.current = true;
+    await supabase.from('attendance').upsert({ athlete_id: meId, wod_date: today }, { onConflict: 'athlete_id,wod_date' });
+    setAttended(true);
+    const { data: attendRows } = await supabase.from('attendance').select('wod_date').eq('athlete_id', meId);
+    const attendedSet = new Set((attendRows ?? []).map((r: any) => r.wod_date as string));
+    attendedSet.add(today);
+    const newStreak = computeStreak(attendedSet, today);
+    setStreak(newStreak);
+    const name = meProfile?.display_name ?? '';
+    const stayHard = name ? `Stay Hard, ${name} 💪` : 'Stay Hard 💪';
+    setSubmitMsg(newStreak > 1 ? `✓ ${stayHard} · 🔥 ${newStreak}-day streak` : `✓ ${stayHard}`);
+    attendingRef.current = false;
   };
 
   const selectDate = (d: string) => {
     setSelectedDate(d);
     setWodTab('today');
     setEditing(false);
+    setSubmitMsg(null); setSubmitErr(null);
+    setAttended(false);
+    setTimeInput(''); setAmrapRounds(''); setAmrapReps(''); setCalorieInput('');
+    setForAthleteId('me'); setForGuestName('');
     setTeamMates([]); setGuestNames([]);
   };
 
@@ -512,7 +655,8 @@ export default function HomePage() {
   }
 
   // ── Weekday view ─────────────────────────────────────────────────────────────
-  const scoreable = type === 'TIME' || type === 'AMRAP';
+  const scoreable = type === 'TIME' || type === 'AMRAP' || type === 'CALORIES';
+  const showSubmitSection = isToday && wod && (scoreable || type === 'NO_SCORE');
   const displayedGroups = wod?.is_team ? groupTeams(scores) : scores.map((s) => [s]);
 
   return (
@@ -521,22 +665,45 @@ export default function HomePage() {
       {calendar}
 
       {/* Score submission — only for today */}
-      {isToday && scoreable && wod && (
-        <section className="rounded-2xl border border-white/10 bg-[#0a0f1e] p-5">
+      {showSubmitSection && (
+        <section className="rounded-2xl border border-white/10 bg-[#0a0f1e] p-4">
           {!meId ? (
-            <div className="flex flex-col items-center gap-3 py-2 text-center">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/5 text-xl">🔒</div>
+            <div className="flex flex-col items-center gap-2.5 py-1 text-center">
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white/5 text-lg">🔒</div>
               <div>
                 <p className="text-sm font-semibold text-white">Log in to post your score</p>
-                <p className="mt-0.5 text-xs text-slate-500">Track your results and compete on the leaderboard</p>
               </div>
-              <a href="/login" className="mt-1 rounded-xl bg-white px-6 py-2 text-sm font-semibold text-black hover:bg-slate-200 transition-colors">
+              <a href="/login" className="rounded-xl bg-white px-6 py-2 text-sm font-semibold text-black hover:bg-slate-200 transition-colors">
                 Log in
               </a>
             </div>
+          ) : type === 'NO_SCORE' ? (
+            /* EMOM / Strength / Skill — "I went" attendance button */
+            <div className="py-1 text-center">
+              {attended ? (
+                <div className="space-y-1">
+                  <p className="text-sm font-medium text-green-400">✓ You&apos;re on the board for today</p>
+                  {streak > 1 && <p className="text-xs text-slate-500">🔥 {streak}-day streak</p>}
+                </div>
+              ) : (
+                <button
+                  onClick={handleAttendance}
+                  className="w-full rounded-xl bg-white/10 py-2.5 text-sm font-semibold text-white hover:bg-white/20 transition-colors"
+                >
+                  I showed up today 💪
+                </button>
+              )}
+              {submitMsg && (
+                <div className="mt-3 text-center space-y-0.5">
+                  {submitMsg.split(' · ').map((line, i) => (
+                    <p key={i} className={`font-medium text-green-400 ${i === 0 ? 'text-sm' : 'text-xs text-slate-400'}`}>{line}</p>
+                  ))}
+                </div>
+              )}
+            </div>
           ) : myScore && !editing ? (
             <>
-              <h2 className="mb-3 text-sm font-semibold text-slate-300">Your Score</h2>
+              <h2 className="mb-2 text-sm font-semibold text-slate-300">Your Score</h2>
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-2xl font-bold text-white">{scoreDisplay(myScore, type)}</p>
@@ -552,10 +719,38 @@ export default function HomePage() {
             </>
           ) : (
             <>
-              <h2 className="mb-4 text-sm font-semibold text-slate-300">
+              <h2 className="mb-3 text-sm font-semibold text-slate-300">
                 {editing ? 'Edit Score' : 'Submit Score'}
               </h2>
-              <div className="mb-4 flex rounded-xl border border-white/10 p-0.5 text-sm">
+
+              {/* Submitting for — only shown for individual WODs, not edit mode */}
+              {!wod.is_team && !editing && (
+                <div className="mb-3">
+                  <label className="mb-1 block text-xs text-slate-500">Submitting for</label>
+                  <select
+                    value={forAthleteId}
+                    onChange={(e) => { setForAthleteId(e.target.value); setForGuestName(''); }}
+                    className="w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:outline-none appearance-none"
+                  >
+                    <option value="me">Myself</option>
+                    {members.filter((m) => m.id !== meId).map((m) => (
+                      <option key={m.id} value={m.id}>{m.display_name ?? 'Unknown'}</option>
+                    ))}
+                    <option value="guest">Guest / Visitor…</option>
+                  </select>
+                  {forAthleteId === 'guest' && (
+                    <input
+                      type="text"
+                      value={forGuestName}
+                      onChange={(e) => setForGuestName(e.target.value)}
+                      placeholder="Visitor's name (e.g. Sara K.)"
+                      className="mt-2 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none"
+                    />
+                  )}
+                </div>
+              )}
+
+              <div className="mb-3 flex rounded-xl border border-white/10 p-0.5 text-sm">
                 {['Rx', 'Scaled'].map((label) => (
                   <button key={label} onClick={() => setIsRx(label === 'Rx')}
                     className={`flex-1 rounded-lg py-1.5 font-medium transition-colors ${
@@ -569,21 +764,27 @@ export default function HomePage() {
                 <input type="text" value={timeInput} onChange={(e) => setTimeInput(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleSubmit(editing)}
                   placeholder="mm:ss"
-                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none" />
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none" />
               )}
               {type === 'AMRAP' && (
                 <div className="flex gap-3">
                   <div className="flex-1">
                     <label className="mb-1 block text-xs text-slate-500">Rounds</label>
                     <input type="number" min="0" value={amrapRounds} onChange={(e) => setAmrapRounds(e.target.value)} placeholder="0"
-                      className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none" />
+                      className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none" />
                   </div>
                   <div className="flex-1">
                     <label className="mb-1 block text-xs text-slate-500">Extra reps</label>
                     <input type="number" min="0" value={amrapReps} onChange={(e) => setAmrapReps(e.target.value)} placeholder="0"
-                      className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none" />
+                      className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none" />
                   </div>
                 </div>
+              )}
+              {type === 'CALORIES' && (
+                <input type="number" min="0" value={calorieInput} onChange={(e) => setCalorieInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSubmit(editing)}
+                  placeholder="Calories"
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none" />
               )}
               {wod.is_team && (
                 <TeammatePicker members={members} meId={meId}
@@ -594,7 +795,7 @@ export default function HomePage() {
                   onRemoveGuest={(name) => setGuestNames((p) => p.filter((n) => n !== name))} />
               )}
               <button onClick={() => handleSubmit(editing)} disabled={submitting}
-                className="mt-4 w-full rounded-xl bg-white py-2.5 text-sm font-semibold text-black hover:bg-slate-200 disabled:opacity-40">
+                className="mt-3 w-full rounded-xl bg-white py-2.5 text-sm font-semibold text-black hover:bg-slate-200 disabled:opacity-40">
                 {submitting ? 'Saving…' : editing ? 'Save Edit' : 'Submit Score'}
               </button>
               {editing && (
@@ -604,7 +805,13 @@ export default function HomePage() {
               )}
             </>
           )}
-          {submitMsg && <p className="mt-3 text-sm font-medium text-green-400">{submitMsg}</p>}
+          {submitMsg && (
+            <div className="mt-3 text-center space-y-0.5">
+              {submitMsg.split(' · ').map((line, i) => (
+                <p key={i} className={`font-medium text-green-400 ${i === 0 ? 'text-sm' : 'text-xs text-slate-400'}`}>{line}</p>
+              ))}
+            </div>
+          )}
           {submitErr && <p className="mt-3 text-sm text-red-400">{submitErr}</p>}
         </section>
       )}
@@ -690,15 +897,22 @@ export default function HomePage() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2.5">
-                          {s.avatar_url ? (
+                          {s.avatar_url && !s.guest_athlete_name ? (
                             <img src={s.avatar_url} alt="" className="h-7 w-7 rounded-full object-cover" />
                           ) : (
                             <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-xs font-bold">
-                              {(s.display_name ?? '?')[0]?.toUpperCase()}
+                              {(s.guest_athlete_name ?? s.display_name ?? '?')[0]?.toUpperCase()}
                             </div>
                           )}
                           <div>
-                            <p className={`font-medium ${isMe ? 'text-white' : 'text-slate-100'}`}>{s.display_name ?? 'Unknown'}</p>
+                            <div className="flex items-center gap-1.5">
+                              <p className={`font-medium ${isMe ? 'text-white' : 'text-slate-100'}`}>
+                                {s.guest_athlete_name ?? s.display_name ?? 'Unknown'}
+                              </p>
+                              {s.guest_athlete_name && (
+                                <span className="rounded-full border border-white/10 px-1.5 py-0.5 text-xs text-slate-500">guest</span>
+                              )}
+                            </div>
                             <p className="text-xs text-slate-600">{s.is_rx ? 'Rx' : 'Scaled'}</p>
                           </div>
                         </div>

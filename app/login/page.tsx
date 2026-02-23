@@ -103,7 +103,6 @@ export default function LoginPage() {
 
         <div className="text-center">
           <h1 className="text-2xl font-bold">SaadiyatWOD</h1>
-          <p className="mt-1 text-sm text-slate-500">Saadiyat Island CrossFit Leaderboard</p>
         </div>
 
         {/* Mode toggle */}

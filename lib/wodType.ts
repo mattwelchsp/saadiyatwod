@@ -1,4 +1,4 @@
-export type WorkoutType = 'TIME' | 'AMRAP' | 'NO_SCORE' | 'UNKNOWN';
+export type WorkoutType = 'TIME' | 'AMRAP' | 'CALORIES' | 'NO_SCORE' | 'UNKNOWN';
 
 /**
  * Detect workout type from raw WOD text.
@@ -24,6 +24,15 @@ export function detectWorkoutTypeFromWodText(
     /\bstrength\b/.test(t)
   ) {
     return 'NO_SCORE';
+  }
+
+  // CALORIES (check before AMRAP/TIME — only if not already NO_SCORE)
+  if (
+    /\bmax\s+(cal|calories)\b/.test(t) ||
+    /\bfor\s+(cal|calories)\b/.test(t) ||
+    /\bcalorie\s+challenge\b/.test(t)
+  ) {
+    return 'CALORIES';
   }
 
   // AMRAP

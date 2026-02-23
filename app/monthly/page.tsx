@@ -63,7 +63,7 @@ function rankForDate(scores: ScoreRaw[], type: WorkoutType): string[][] {
       const bs = b.time_seconds ?? Infinity;
       return as - bs;
     }
-    // AMRAP
+    // AMRAP and CALORIES: higher is better
     const av = (a.amrap_rounds ?? -1) * 10000 + (a.amrap_reps ?? -1);
     const bv = (b.amrap_rounds ?? -1) * 10000 + (b.amrap_reps ?? -1);
     return bv - av;
@@ -177,23 +177,36 @@ function computePoints(
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
+// ── Week helpers ───────────────────────────────────────────────────────────────
+
+/** Monday of the ISO week containing dateStr, offset by weekDelta weeks */
+function weekBounds(dateStr: string, weekDelta: number): { from: string; to: string; label: string } {
+  const d = new Date(dateStr + 'T12:00:00');
+  const dow = d.getDay() === 0 ? 7 : d.getDay(); // 1=Mon … 7=Sun
+  d.setDate(d.getDate() - (dow - 1) + weekDelta * 7);
+  const monday = d.toLocaleDateString('en-CA');
+  const friday = new Date(d); friday.setDate(d.getDate() + 4);
+  const fridayStr = friday.toLocaleDateString('en-CA');
+  const label = `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${friday.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+  return { from: monday, to: fridayStr, label };
+}
+
+// ── Component ──────────────────────────────────────────────────────────────────
+
 export default function MonthlyPage() {
   const todayStr = todayInTZ();
+  const [view, setView] = useState<'week' | 'month'>('week');
   const [year, setYear] = useState(() => parseInt(todayStr.slice(0, 4)));
   const [month, setMonth] = useState(() => parseInt(todayStr.slice(5, 7)));
+  const [weekDelta, setWeekDelta] = useState(0);
   const [meId, setMeId] = useState<string | null>(null);
   const [rows, setRows] = useState<AthletePoints[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const loadMonth = useCallback(async (y: number, m: number) => {
+  const loadRange = useCallback(async (from: string, to: string, cutoffDate: string | null) => {
     setLoading(true);
-
     const { data: authData } = await supabase.auth.getUser();
     setMeId(authData.user?.id ?? null);
-
-    const from = `${y}-${String(m).padStart(2, '0')}-01`;
-    const lastDay = new Date(y, m, 0).getDate();
-    const to = `${y}-${String(m).padStart(2, '0')}-${lastDay}`;
 
     const [wodsRes, scoresRes, profilesRes] = await Promise.all([
       supabase.from('wods').select('wod_date, wod_text, workout_type_override').gte('wod_date', from).lte('wod_date', to),
@@ -201,15 +214,30 @@ export default function MonthlyPage() {
       supabase.from('profiles').select('id, display_name, avatar_url'),
     ]);
 
-    const wods = (wodsRes.data ?? []) as WodRaw[];
-    const scores = (scoresRes.data ?? []) as ScoreRaw[];
+    const allWods = (wodsRes.data ?? []) as WodRaw[];
+    const allScores = (scoresRes.data ?? []) as ScoreRaw[];
     const profiles = (profilesRes.data ?? []) as Profile[];
+
+    const wods = cutoffDate ? allWods.filter((w) => w.wod_date < cutoffDate) : allWods;
+    const scores = cutoffDate ? allScores.filter((s) => s.wod_date < cutoffDate) : allScores;
 
     setRows(computePoints(wods, scores, profiles));
     setLoading(false);
   }, []);
 
-  useEffect(() => { loadMonth(year, month); }, [year, month, loadMonth]);
+  useEffect(() => {
+    if (view === 'month') {
+      const from = `${year}-${String(month).padStart(2, '0')}-01`;
+      const lastDay = new Date(year, month, 0).getDate();
+      const to = `${year}-${String(month).padStart(2, '0')}-${lastDay}`;
+      const isCurrentMonth = `${year}-${String(month).padStart(2, '0')}` === todayStr.slice(0, 7);
+      loadRange(from, to, isCurrentMonth ? todayStr : null);
+    } else {
+      const { from, to } = weekBounds(todayStr, weekDelta);
+      // For current week: exclude today (day not over)
+      loadRange(from, to, todayStr);
+    }
+  }, [view, year, month, weekDelta, todayStr, loadRange]);
 
   const prevMonth = () => {
     if (month === 1) { setYear((y) => y - 1); setMonth(12); }
@@ -224,22 +252,44 @@ export default function MonthlyPage() {
 
   const monthLabel = new Date(year, month - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   const atMax = year === parseInt(todayStr.slice(0, 4)) && month >= parseInt(todayStr.slice(5, 7));
+  const weekLabel = weekBounds(todayStr, weekDelta).label;
+  const atMaxWeek = weekDelta >= 0;
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-lg flex-col gap-5 bg-black px-4 py-10 pb-28 text-slate-100">
 
-      {/* Month nav */}
-      <div className="flex items-center justify-between">
-        <button onClick={prevMonth} className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 text-slate-400 hover:text-white">‹</button>
-        <p className="text-sm font-semibold text-white">{monthLabel}</p>
-        <button onClick={nextMonth} disabled={atMax} className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 text-slate-400 hover:text-white disabled:opacity-30">›</button>
+      {/* View toggle */}
+      <div className="flex rounded-xl border border-white/10 p-1 bg-white/5">
+        {(['week', 'month'] as const).map((v) => (
+          <button key={v} type="button" onClick={() => setView(v)}
+            className={`flex-1 rounded-lg py-2 text-sm font-medium transition-colors capitalize ${
+              view === v ? 'bg-white text-black' : 'text-slate-400 hover:text-white'
+            }`}>
+            {v === 'week' ? 'This Week' : 'Monthly'}
+          </button>
+        ))}
       </div>
+
+      {/* Period nav */}
+      {view === 'month' ? (
+        <div className="flex items-center justify-between">
+          <button onClick={prevMonth} className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 text-slate-400 hover:text-white">‹</button>
+          <p className="text-sm font-semibold text-white">{monthLabel}</p>
+          <button onClick={nextMonth} disabled={atMax} className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 text-slate-400 hover:text-white disabled:opacity-30">›</button>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between">
+          <button onClick={() => setWeekDelta((w) => w - 1)} className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 text-slate-400 hover:text-white">‹</button>
+          <p className="text-sm font-semibold text-white">{weekLabel}</p>
+          <button onClick={() => setWeekDelta((w) => w + 1)} disabled={atMaxWeek} className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 text-slate-400 hover:text-white disabled:opacity-30">›</button>
+        </div>
+      )}
 
       {/* Explanation */}
       <div className="rounded-2xl border border-white/10 bg-[#0a0f1e] px-4 py-3 text-center">
         <p className="text-xs text-slate-400">
-          Top 3 finishers on each daily WOD earn points — 🥇 3 pts, 🥈 2 pts, 🥉 1 pt.
-          Whoever racks up the most points by end of month takes the crown.
+          Top 3 finishers each day earn points — 🥇 3 pts, 🥈 2 pts, 🥉 1 pt.
+          {view === 'month' ? ' Most points by end of month takes the crown.' : ' Most points this week wins.'}
         </p>
       </div>
 
@@ -249,7 +299,7 @@ export default function MonthlyPage() {
         </div>
       ) : rows.length === 0 ? (
         <div className="rounded-2xl border border-white/10 bg-[#0a0f1e] px-6 py-10 text-center text-sm text-slate-500">
-          No scores yet this month.
+          {view === 'week' ? 'No scores logged this week yet.' : 'No scores yet this month.'}
         </div>
       ) : (
         <div className="overflow-hidden rounded-2xl border border-white/10">
