@@ -71,6 +71,12 @@ type AllTimeStats = {
   dailyGoldDates: string[];
   dailySilverDates: string[];
   dailyBronzeDates: string[];
+  weeklyFirst: number;
+  weeklySecond: number;
+  weeklyThird: number;
+  weeklyFirstWeeks: string[];
+  weeklySecondWeeks: string[];
+  weeklyThirdWeeks: string[];
   monthlyFirst: number;
   monthlySecond: number;
   monthlyThird: number;
@@ -184,6 +190,31 @@ function computeMonthlyPoints(
   return map;
 }
 
+/** Returns the Monday (YYYY-MM-DD) of the week containing dateStr */
+function getWeekMonday(dateStr: string): string {
+  const d = new Date(dateStr + 'T12:00:00');
+  const day = d.getDay(); // 0=Sun
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  return d.toLocaleDateString('en-CA');
+}
+
+/** Returns the Friday (YYYY-MM-DD) of the week starting on mondayStr */
+function getWeekFriday(mondayStr: string): string {
+  const d = new Date(mondayStr + 'T12:00:00');
+  d.setDate(d.getDate() + 4);
+  return d.toLocaleDateString('en-CA');
+}
+
+/** Returns a readable label like "Mar 3–7" for a week starting on mondayStr */
+function formatWeekLabel(mondayStr: string): string {
+  const mon = new Date(mondayStr + 'T12:00:00');
+  const fri = new Date(mondayStr + 'T12:00:00');
+  fri.setDate(fri.getDate() + 4);
+  const fmt = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return `${fmt(mon)}–${fmt(fri)}`;
+}
+
 /** Compute all-time stats for a given athlete from raw data */
 function computeStats(
   uid: string,
@@ -273,9 +304,48 @@ function computeStats(
     else if (myRank === 2) { monthlyThird++; monthlyThirdMonths.push(month); }
   }
 
+  // Weekly podiums — for each completed Mon–Fri week
+  const weekMondaySet = new Set<string>();
+  for (const d of myDates) {
+    const day = new Date(d + 'T12:00:00').getDay();
+    if (day >= 1 && day <= 5) weekMondaySet.add(getWeekMonday(d));
+  }
+  const completedWeeks = [...weekMondaySet]
+    .filter((mon) => getWeekFriday(mon) < todayStr)
+    .sort();
+
+  let weeklyFirst = 0, weeklySecond = 0, weeklyThird = 0;
+  const weeklyFirstWeeks: string[] = [];
+  const weeklySecondWeeks: string[] = [];
+  const weeklyThirdWeeks: string[] = [];
+
+  for (const mon of completedWeeks) {
+    const fri = getWeekFriday(mon);
+    const weekWods = allWods.filter((w) => w.wod_date >= mon && w.wod_date <= fri);
+    const weekScores = allScores.filter((s) => s.wod_date >= mon && s.wod_date <= fri);
+    const pointsMap = computeMonthlyPoints(weekWods, weekScores);
+
+    const ranked = [...pointsMap.entries()]
+      .filter(([, v]) => v.total > 0)
+      .sort(([, a], [, b]) => {
+        if (b.total !== a.total) return b.total - a.total;
+        if (b.gold !== a.gold) return b.gold - a.gold;
+        if (b.silver !== a.silver) return b.silver - a.silver;
+        return b.bronze - a.bronze;
+      });
+
+    const label = formatWeekLabel(mon);
+    const myRankW = ranked.findIndex(([id]) => id === uid);
+    if (myRankW === 0) { weeklyFirst++; weeklyFirstWeeks.push(label); }
+    else if (myRankW === 1) { weeklySecond++; weeklySecondWeeks.push(label); }
+    else if (myRankW === 2) { weeklyThird++; weeklyThirdWeeks.push(label); }
+  }
+
   return {
     wodsLogged, dailyGold, dailySilver, dailyBronze,
     dailyGoldDates, dailySilverDates, dailyBronzeDates,
+    weeklyFirst, weeklySecond, weeklyThird,
+    weeklyFirstWeeks, weeklySecondWeeks, weeklyThirdWeeks,
     monthlyFirst, monthlySecond, monthlyThird,
     monthlyFirstMonths, monthlySecondMonths, monthlyThirdMonths,
     placements, thisMonthCount,
@@ -580,6 +650,44 @@ export default function MePage() {
                     <span key={d} className="rounded-lg bg-white/10 px-2 py-1 text-xs text-slate-300">
                       {new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                     </span>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+
+          <div className="mb-4 border-b border-white/5 pb-4" />
+
+          {/* Weekly podiums */}
+          <p className="mb-2 text-xs text-slate-600 uppercase tracking-wider">Weekly</p>
+          <div className="mb-1 grid grid-cols-3 gap-3">
+            {([
+              { key: 'first',  label: '🥇 1st', value: stats.weeklyFirst,  weeks: stats.weeklyFirstWeeks },
+              { key: 'second', label: '🥈 2nd', value: stats.weeklySecond, weeks: stats.weeklySecondWeeks },
+              { key: 'third',  label: '🥉 3rd', value: stats.weeklyThird,  weeks: stats.weeklyThirdWeeks },
+            ] as const).map(({ key, label, value, weeks }) => (
+              <button
+                key={key}
+                type="button"
+                disabled={value === 0}
+                onClick={() => setExpandedMedal(expandedMedal === `weekly-${key}` ? null : `weekly-${key}`)}
+                className={`rounded-xl px-3 py-3 text-center transition-colors ${
+                  expandedMedal === `weekly-${key}` ? 'bg-white/15 ring-1 ring-white/20' : 'bg-white/5 hover:bg-white/10'
+                } disabled:cursor-default disabled:opacity-60`}
+              >
+                <p className="text-lg">{label}</p>
+                <p className="mt-1 text-xl font-bold text-white">{value}</p>
+              </button>
+            ))}
+          </div>
+          {(['first', 'second', 'third'] as const).map((key) => {
+            const weeks = key === 'first' ? stats.weeklyFirstWeeks : key === 'second' ? stats.weeklySecondWeeks : stats.weeklyThirdWeeks;
+            if (expandedMedal !== `weekly-${key}` || weeks.length === 0) return null;
+            return (
+              <div key={key} className="mb-3 mt-2 rounded-xl border border-white/10 bg-slate-900 px-3 py-2">
+                <div className="flex flex-wrap gap-1.5">
+                  {weeks.map((w) => (
+                    <span key={w} className="rounded-lg bg-white/10 px-2 py-1 text-xs text-slate-300">{w}</span>
                   ))}
                 </div>
               </div>

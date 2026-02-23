@@ -819,7 +819,7 @@ export default function HomePage() {
       {/* Leaderboard */}
       <section>
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-500">Leaderboard</h2>
+          <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-500">Daily Leaderboard</h2>
           {!isToday && (
             <span className="text-xs text-slate-600">{formatDateDisplay(selectedDate)}</span>
           )}

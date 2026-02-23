@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation';
 
 const TABS = [
   { label: 'Home', href: '/' },
-  { label: 'Leaderboard', href: '/monthly' },
+  { label: 'Rankings', href: '/monthly' },
   { label: 'Me', href: '/me' },
 ];
 
@@ -44,7 +44,7 @@ function TabIcon({ name, active }: { name: string; active: boolean }) {
       </svg>
     );
   }
-  if (name === 'Leaderboard') {
+  if (name === 'Rankings') {
     return (
       <svg className={cls} fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={active ? 2.5 : 1.8}
