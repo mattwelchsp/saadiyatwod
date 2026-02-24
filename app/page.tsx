@@ -58,7 +58,7 @@ function scoreDisplay(s: Score, type: WorkoutType): string {
     return '—';
   }
   if (type === 'CALORIES') {
-    if (s.amrap_reps != null) return `${s.amrap_reps} cal`;
+    if (s.amrap_reps != null) return `${s.amrap_reps.toLocaleString()} cal`;
     return '—';
   }
   return '—';

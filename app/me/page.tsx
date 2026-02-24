@@ -101,6 +101,9 @@ function scoreDisplay(s: RecentScore): string {
     if (s.amrap_rounds != null && s.amrap_reps != null) return `${s.amrap_rounds}+${s.amrap_reps}`;
     if (s.amrap_input) return s.amrap_input;
   }
+  if (type === 'CALORIES') {
+    if (s.amrap_reps != null) return `${s.amrap_reps.toLocaleString()} cal`;
+  }
   return '—';
 }
 
