@@ -423,9 +423,9 @@ export default function HomePage() {
     // Determine effective athlete for individual WODs
     const isGuestSubmission = !wod?.is_team && forAthleteId === 'guest';
     const guestName = isGuestSubmission ? (forGuestName.trim() || 'Visitor') : null;
-    // For guest: generate a temp UUID (not linked to any profile, score shows guest name)
+    // For guest: use null athlete_id (no profile link); guest_athlete_name holds display name
     const effectiveAthleteId = !wod?.is_team
-      ? (forAthleteId === 'me' ? meId : forAthleteId === 'guest' ? crypto.randomUUID() : forAthleteId)
+      ? (forAthleteId === 'me' ? meId : forAthleteId === 'guest' ? null : forAthleteId)
       : meId;
 
     const teamIds = wod?.is_team ? Array.from(new Set([meId, ...teamMates])) : [effectiveAthleteId!];

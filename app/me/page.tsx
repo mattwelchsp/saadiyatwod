@@ -85,6 +85,7 @@ type AllTimeStats = {
   monthlyThirdMonths: string[];
   placements: PlacementPoint[];
   avgPlace: number | null;
+  avgPlaceMonth: number | null;
   thisMonthCount: number;
 };
 
@@ -278,6 +279,12 @@ function computeStats(
     ? placements.reduce((sum, p) => sum + p.rank, 0) / placements.length
     : null;
 
+  // Average placement this month only
+  const monthPlacements = placements.filter((p) => p.date.startsWith(currentMonthStr));
+  const avgPlaceMonth = monthPlacements.length > 0
+    ? monthPlacements.reduce((sum, p) => sum + p.rank, 0) / monthPlacements.length
+    : null;
+
   // This month count
   const thisMonthCount = myDates.filter((d) => d.startsWith(currentMonthStr)).length;
 
@@ -354,7 +361,7 @@ function computeStats(
     weeklyFirstWeeks, weeklySecondWeeks, weeklyThirdWeeks,
     monthlyFirst, monthlySecond, monthlyThird,
     monthlyFirstMonths, monthlySecondMonths, monthlyThirdMonths,
-    placements, avgPlace, thisMonthCount,
+    placements, avgPlace, avgPlaceMonth, thisMonthCount,
   };
 }
 
@@ -427,6 +434,7 @@ export default function MePage() {
   const [err, setErr] = useState<string | null>(null);
   const [expandedMedal, setExpandedMedal] = useState<string | null>(null);
   const [chartLimit, setChartLimit] = useState(20);
+  const [editingProfile, setEditingProfile] = useState(false);
   const [streak, setStreak] = useState(0);
 
   // Crop modal state
@@ -586,23 +594,62 @@ export default function MePage() {
       <h1 className="text-xl font-bold text-white">My Profile</h1>
 
       {/* Avatar + name header */}
-      <section className="flex items-center gap-5 rounded-2xl border border-white/10 bg-[#0a0f1e] p-5">
-        <button onClick={() => fileRef.current?.click()} className="relative flex-shrink-0">
-          {avatarUrl ? (
-            <img src={avatarUrl} alt="" className="h-20 w-20 rounded-full object-cover" />
-          ) : (
-            <div className="flex h-20 w-20 items-center justify-center rounded-full bg-white/10 text-2xl font-bold text-white">
-              {displayName[0]?.toUpperCase() ?? '?'}
-            </div>
-          )}
-          <div className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 opacity-0 hover:opacity-100 transition-opacity">
-            <span className="text-xs text-white">{uploading ? '...' : 'Change'}</span>
+      <section className="rounded-2xl border border-white/10 bg-[#0a0f1e] p-5">
+        <button
+          onClick={() => setEditingProfile((v) => !v)}
+          className="flex w-full items-center gap-5 text-left"
+        >
+          <div className="relative flex-shrink-0">
+            {avatarUrl ? (
+              <img src={avatarUrl} alt="" className="h-20 w-20 rounded-full object-cover" />
+            ) : (
+              <div className="flex h-20 w-20 items-center justify-center rounded-full bg-white/10 text-2xl font-bold text-white">
+                {displayName[0]?.toUpperCase() ?? '?'}
+              </div>
+            )}
+            {uploading && (
+              <div className="absolute inset-0 flex items-center justify-center rounded-full bg-black/60">
+                <span className="text-xs text-white">...</span>
+              </div>
+            )}
           </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-semibold text-white">{displayName || 'Set your name'}</p>
+            <p className="mt-0.5 text-xs text-slate-500">Tap to change display name or photo</p>
+          </div>
+          <svg className={`h-4 w-4 flex-shrink-0 text-slate-500 transition-transform ${editingProfile ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
         </button>
-        <div>
-          <p className="font-semibold text-white">{displayName || 'Set your name below'}</p>
-          <p className="mt-0.5 text-xs text-slate-500">Tap photo to change avatar</p>
-        </div>
+
+        {editingProfile && (
+          <div className="mt-4 border-t border-white/5 pt-4 space-y-3">
+            <div>
+              <label className="mb-1 block text-xs text-slate-500">Display name <span className="text-slate-600">(e.g. Matt W.)</span></label>
+              <input
+                type="text"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSaveName()}
+                placeholder="Matt W."
+                className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none"
+              />
+            </div>
+            <div className="flex gap-2">
+              <button onClick={handleSaveName} disabled={saving}
+                className="flex-1 rounded-xl bg-white py-2 text-sm font-semibold text-black hover:bg-slate-200 disabled:opacity-40">
+                {saving ? 'Saving...' : 'Save name'}
+              </button>
+              <button onClick={() => fileRef.current?.click()}
+                className="flex-1 rounded-xl border border-white/20 py-2 text-sm font-medium text-slate-300 hover:bg-white/10">
+                Change photo
+              </button>
+            </div>
+            {msg && <p className="text-sm text-green-400">{msg}</p>}
+            {err && <p className="text-sm text-red-400">{err}</p>}
+          </div>
+        )}
+
         <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
       </section>
 
@@ -627,11 +674,17 @@ export default function MePage() {
       )}
 
       {/* Avg place + placement trend — own section */}
-      {stats && stats.avgPlace !== null && (
+      {stats && (stats.avgPlace !== null || stats.avgPlaceMonth !== null) && (
         <section className="rounded-2xl border border-white/10 bg-[#0a0f1e] p-5">
-          <div className="mb-4 flex items-baseline justify-between">
-            <span className="text-sm text-slate-400">Avg. place</span>
-            <span className="text-2xl font-bold text-white">{stats.avgPlace.toFixed(1)}</span>
+          <div className="mb-4 grid grid-cols-2 gap-3">
+            <div className="rounded-xl bg-white/5 px-3 py-3 text-center">
+              <p className="text-xs text-slate-500 mb-1">Avg. place (month)</p>
+              <p className="text-2xl font-bold text-white">{stats.avgPlaceMonth !== null ? stats.avgPlaceMonth.toFixed(1) : '—'}</p>
+            </div>
+            <div className="rounded-xl bg-white/5 px-3 py-3 text-center">
+              <p className="text-xs text-slate-500 mb-1">Avg. place (all-time)</p>
+              <p className="text-2xl font-bold text-white">{stats.avgPlace !== null ? stats.avgPlace.toFixed(1) : '—'}</p>
+            </div>
           </div>
           {stats.placements.length >= 3 && (
             <>
@@ -785,27 +838,6 @@ export default function MePage() {
           })}
         </section>
       )}
-
-      {/* Display name */}
-      <section className="rounded-2xl border border-white/10 bg-[#0a0f1e] p-5">
-        <label className="mb-2 block text-sm font-medium text-slate-300">
-          Display name <span className="text-slate-600">(first name + last initial, e.g. Matt W.)</span>
-        </label>
-        <input
-          type="text"
-          value={displayName}
-          onChange={(e) => setDisplayName(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleSaveName()}
-          placeholder="Matt W."
-          className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none"
-        />
-        <button onClick={handleSaveName} disabled={saving}
-          className="mt-3 rounded-xl bg-white px-5 py-2 text-sm font-semibold text-black hover:bg-slate-200 disabled:opacity-40">
-          {saving ? 'Saving...' : 'Save'}
-        </button>
-        {msg && <p className="mt-2 text-sm text-green-400">{msg}</p>}
-        {err && <p className="mt-2 text-sm text-red-400">{err}</p>}
-      </section>
 
       {/* Recent scores */}
       {recentScores.length > 0 && (
