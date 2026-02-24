@@ -84,6 +84,7 @@ type AllTimeStats = {
   monthlySecondMonths: string[];
   monthlyThirdMonths: string[];
   placements: PlacementPoint[];
+  avgPlace: number | null;
   thisMonthCount: number;
 };
 
@@ -272,6 +273,11 @@ function computeStats(
   // Sort placements chronologically
   placements.sort((a, b) => a.date.localeCompare(b.date));
 
+  // Average placement (only days with a ranked score)
+  const avgPlace = placements.length > 0
+    ? placements.reduce((sum, p) => sum + p.rank, 0) / placements.length
+    : null;
+
   // This month count
   const thisMonthCount = myDates.filter((d) => d.startsWith(currentMonthStr)).length;
 
@@ -348,7 +354,7 @@ function computeStats(
     weeklyFirstWeeks, weeklySecondWeeks, weeklyThirdWeeks,
     monthlyFirst, monthlySecond, monthlyThird,
     monthlyFirstMonths, monthlySecondMonths, monthlyThirdMonths,
-    placements, thisMonthCount,
+    placements, avgPlace, thisMonthCount,
   };
 }
 
@@ -607,16 +613,50 @@ export default function MePage() {
         <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
       </section>
 
+      {/* Streak + this month — moved above all-time stats */}
+      {(streak > 0 || (stats && stats.thisMonthCount > 0)) && (
+        <section className="grid grid-cols-2 gap-3">
+          {streak > 0 && (
+            <div className="rounded-2xl border border-white/10 bg-[#0a0f1e] px-4 py-4 text-center">
+              <p className="text-2xl">🔥</p>
+              <p className="mt-1 text-2xl font-bold text-white">{streak}</p>
+              <p className="mt-0.5 text-xs text-slate-500">day streak</p>
+            </div>
+          )}
+          {stats && stats.thisMonthCount > 0 && (
+            <div className="rounded-2xl border border-white/10 bg-[#0a0f1e] px-4 py-4 text-center">
+              <p className="text-2xl">📅</p>
+              <p className="mt-1 text-2xl font-bold text-white">{stats.thisMonthCount}</p>
+              <p className="mt-0.5 text-xs text-slate-500">WODs this month</p>
+            </div>
+          )}
+        </section>
+      )}
+
       {/* All-time stats */}
       {stats && (
         <section className="rounded-2xl border border-white/10 bg-[#0a0f1e] p-5">
           <h2 className="mb-4 text-xs font-semibold uppercase tracking-widest text-slate-500">All-Time</h2>
 
-          {/* WODs logged */}
+          {/* WODs logged + avg place */}
           <div className="mb-4 flex items-baseline justify-between border-b border-white/5 pb-4">
             <span className="text-sm text-slate-400">WODs logged</span>
             <span className="text-2xl font-bold text-white">{stats.wodsLogged}</span>
           </div>
+          {stats.avgPlace !== null && (
+            <div className="mb-4 flex items-baseline justify-between border-b border-white/5 pb-4">
+              <span className="text-sm text-slate-400">Avg. place</span>
+              <span className="text-2xl font-bold text-white">{stats.avgPlace.toFixed(1)}</span>
+            </div>
+          )}
+
+          {/* Placement trend chart — lives next to avg place */}
+          {stats.placements.length >= 3 && (
+            <div className="mb-4 border-b border-white/5 pb-4">
+              <p className="mb-2 text-xs text-slate-600 uppercase tracking-wider">Placement Trend</p>
+              <PlacementChart placements={stats.placements} />
+            </div>
+          )}
 
           {/* Daily medals */}
           <p className="mb-2 text-xs text-slate-600 uppercase tracking-wider">Daily</p>
@@ -733,34 +773,6 @@ export default function MePage() {
               </div>
             );
           })}
-        </section>
-      )}
-
-      {/* Streak + this month */}
-      {(streak > 0 || (stats && stats.thisMonthCount > 0)) && (
-        <section className="grid grid-cols-2 gap-3">
-          {streak > 0 && (
-            <div className="rounded-2xl border border-white/10 bg-[#0a0f1e] px-4 py-4 text-center">
-              <p className="text-2xl">🔥</p>
-              <p className="mt-1 text-2xl font-bold text-white">{streak}</p>
-              <p className="mt-0.5 text-xs text-slate-500">day streak</p>
-            </div>
-          )}
-          {stats && stats.thisMonthCount > 0 && (
-            <div className="rounded-2xl border border-white/10 bg-[#0a0f1e] px-4 py-4 text-center">
-              <p className="text-2xl">📅</p>
-              <p className="mt-1 text-2xl font-bold text-white">{stats.thisMonthCount}</p>
-              <p className="mt-0.5 text-xs text-slate-500">WODs this month</p>
-            </div>
-          )}
-        </section>
-      )}
-
-      {/* Placement trend chart */}
-      {stats && stats.placements.length >= 3 && (
-        <section className="rounded-2xl border border-white/10 bg-[#0a0f1e] p-5">
-          <h2 className="mb-4 text-xs font-semibold uppercase tracking-widest text-slate-500">Daily Placement Trend</h2>
-          <PlacementChart placements={stats.placements} />
         </section>
       )}
 
