@@ -289,6 +289,7 @@ export default function HomePage() {
   const [submitMsg, setSubmitMsg] = useState<string | null>(null);
   const [submitErr, setSubmitErr] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  const [addingForOther, setAddingForOther] = useState(false);
 
   // One-time auth + member load
   useEffect(() => {
@@ -484,10 +485,12 @@ export default function HomePage() {
         else if (rank === 3) { fireConfetti(3); setSubmitMsg(`🥉 3rd place! ${stayHard}${streakLine}`); }
         else setSubmitMsg(`✓ ${stayHard}${streakLine}`);
       } else {
-        const name = meProfile?.display_name ?? '';
-        const stayHard = name ? `Stay Hard, ${name} 💪` : 'Stay Hard 💪';
-        const streakLine = newStreak > 1 ? ` · 🔥 ${newStreak}-day streak` : '';
-        setSubmitMsg(`✓ ${stayHard}${streakLine}`);
+        // Submitted for someone else — close the add-for-other form
+        setAddingForOther(false);
+        const addedName = forAthleteId === 'guest'
+          ? (forGuestName.trim() || 'Guest')
+          : (members.find((m) => m.id === forAthleteId)?.display_name ?? 'Athlete');
+        setSubmitMsg(`✓ Score added for ${addedName}`);
       }
     }
     setSubmitting(false);
@@ -513,6 +516,7 @@ export default function HomePage() {
     setSelectedDate(d);
     setWodTab('today');
     setEditing(false);
+    setAddingForOther(false);
     setSubmitMsg(null); setSubmitErr(null);
     setAttended(false);
     setTimeInput(''); setAmrapRounds(''); setAmrapReps(''); setCalorieInput('');
@@ -710,12 +714,103 @@ export default function HomePage() {
                   <p className="mt-0.5 text-xs text-slate-500">{myScore.is_rx ? 'Rx' : 'Scaled'}</p>
                 </div>
                 {canEdit(myScore) && (
-                  <button onClick={() => { setEditing(true); setSubmitMsg(null); }}
+                  <button onClick={() => { setEditing(true); setSubmitMsg(null); setAddingForOther(false); }}
                     className="rounded-xl border border-white/20 px-4 py-1.5 text-xs font-medium text-slate-300 hover:bg-white/10">
                     Edit (30 min)
                   </button>
                 )}
               </div>
+
+              {/* Add score for others */}
+              {!wod.is_team && (
+                <div className="mt-4 border-t border-white/5 pt-4">
+                  {addingForOther ? (
+                    <>
+                      <div className="mb-3">
+                        <label className="mb-1 block text-xs text-slate-500">Submitting for</label>
+                        <select
+                          value={forAthleteId}
+                          onChange={(e) => { setForAthleteId(e.target.value); setForGuestName(''); }}
+                          className="w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:outline-none appearance-none"
+                        >
+                          {members.filter((m) => m.id !== meId).map((m) => (
+                            <option key={m.id} value={m.id}>{m.display_name ?? 'Unknown'}</option>
+                          ))}
+                          <option value="guest">Guest / Visitor…</option>
+                        </select>
+                        {forAthleteId === 'guest' && (
+                          <input
+                            type="text"
+                            value={forGuestName}
+                            onChange={(e) => setForGuestName(e.target.value)}
+                            placeholder="Visitor's name (e.g. Sara K.)"
+                            className="mt-2 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none"
+                          />
+                        )}
+                      </div>
+                      <div className="mb-3 flex rounded-xl border border-white/10 p-0.5 text-sm">
+                        {['Rx', 'Scaled'].map((label) => (
+                          <button key={label} onClick={() => setIsRx(label === 'Rx')}
+                            className={`flex-1 rounded-lg py-1.5 font-medium transition-colors ${
+                              (label === 'Rx') === isRx ? 'bg-white text-black' : 'text-slate-400 hover:text-white'
+                            }`}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      {type === 'TIME' && (
+                        <input type="text" value={timeInput} onChange={(e) => setTimeInput(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && handleSubmit(false)}
+                          placeholder="mm:ss"
+                          className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none" />
+                      )}
+                      {type === 'AMRAP' && (
+                        <div className="flex gap-3">
+                          <div className="flex-1">
+                            <label className="mb-1 block text-xs text-slate-500">Rounds</label>
+                            <input type="number" min="0" value={amrapRounds} onChange={(e) => setAmrapRounds(e.target.value)} placeholder="0"
+                              className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none" />
+                          </div>
+                          <div className="flex-1">
+                            <label className="mb-1 block text-xs text-slate-500">Extra reps</label>
+                            <input type="number" min="0" value={amrapReps} onChange={(e) => setAmrapReps(e.target.value)} placeholder="0"
+                              className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none" />
+                          </div>
+                        </div>
+                      )}
+                      {type === 'CALORIES' && (
+                        <input type="number" min="0" value={calorieInput} onChange={(e) => setCalorieInput(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && handleSubmit(false)}
+                          placeholder="Calories"
+                          className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none" />
+                      )}
+                      <div className="mt-3 flex gap-2">
+                        <button onClick={() => handleSubmit(false)} disabled={submitting}
+                          className="flex-1 rounded-xl bg-white py-2.5 text-sm font-semibold text-black hover:bg-slate-200 disabled:opacity-40">
+                          {submitting ? 'Saving…' : 'Submit Score'}
+                        </button>
+                        <button onClick={() => { setAddingForOther(false); setForAthleteId('me'); setForGuestName(''); setTimeInput(''); setAmrapRounds(''); setAmrapReps(''); setCalorieInput(''); }}
+                          className="rounded-xl border border-white/20 px-4 py-2.5 text-sm text-slate-400 hover:text-white">
+                          Cancel
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        setAddingForOther(true);
+                        setSubmitMsg(null);
+                        const firstOther = members.find((m) => m.id !== meId);
+                        setForAthleteId(firstOther ? firstOther.id : 'guest');
+                        setTimeInput(''); setAmrapRounds(''); setAmrapReps(''); setCalorieInput('');
+                      }}
+                      className="w-full rounded-xl border border-white/10 py-2 text-xs font-medium text-slate-400 hover:bg-white/5 hover:text-slate-200 transition-colors"
+                    >
+                      + Add score for someone else
+                    </button>
+                  )}
+                </div>
+              )}
             </>
           ) : (
             <>
