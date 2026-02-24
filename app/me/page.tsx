@@ -360,51 +360,43 @@ function computeStats(
 
 // ── Placement Chart ───────────────────────────────────────────────────────────
 
-function PlacementChart({ placements }: { placements: PlacementPoint[] }) {
+function PlacementChart({ placements, limit }: { placements: PlacementPoint[]; limit: number }) {
+  const visible = placements.slice(-limit);
   const W = 280, H = 80;
   const PAD = { top: 8, bottom: 24, left: 24, right: 8 };
   const chartW = W - PAD.left - PAD.right;
   const chartH = H - PAD.top - PAD.bottom;
 
-  const maxRank = Math.max(4, ...placements.map((p) => p.rank));
-  const n = placements.length;
+  const maxRank = Math.max(4, ...visible.map((p) => p.rank));
+  const n = visible.length;
 
   const xFor = (i: number) => PAD.left + (n === 1 ? chartW / 2 : (i / (n - 1)) * chartW);
-  // Y: rank 1 at top (PAD.top), maxRank at bottom
   const yFor = (rank: number) => PAD.top + ((rank - 1) / (maxRank - 1)) * chartH;
 
   const dotColor = (rank: number) =>
     rank === 1 ? '#FFD700' : rank === 2 ? '#C0C0C0' : rank === 3 ? '#CD7F32' : '#475569';
 
-  const polyPoints = placements.map((p, i) => `${xFor(i)},${yFor(p.rank)}`).join(' ');
+  const polyPoints = visible.map((p, i) => `${xFor(i)},${yFor(p.rank)}`).join(' ');
 
-  // X-axis labels: first, last, and a few in between
   const labelIndices = new Set([0, n - 1]);
   if (n > 4) labelIndices.add(Math.floor(n / 2));
 
   return (
     <div className="overflow-x-auto">
       <svg width={W} height={H} className="overflow-visible">
-        {/* Horizontal rank guides */}
         {[1, 2, 3].map((r) => (
           <g key={r}>
             <line x1={PAD.left} x2={W - PAD.right} y1={yFor(r)} y2={yFor(r)} stroke="rgba(255,255,255,0.05)" strokeWidth={1} />
             <text x={PAD.left - 4} y={yFor(r) + 4} textAnchor="end" fill="#475569" fontSize={8}>{r}</text>
           </g>
         ))}
-
-        {/* Line connecting dots */}
         {n > 1 && (
           <polyline points={polyPoints} fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth={1.5} strokeLinejoin="round" />
         )}
-
-        {/* Dots */}
-        {placements.map((p, i) => (
+        {visible.map((p, i) => (
           <circle key={p.date} cx={xFor(i)} cy={yFor(p.rank)} r={4} fill={dotColor(p.rank)} />
         ))}
-
-        {/* X-axis date labels */}
-        {placements.map((p, i) => {
+        {visible.map((p, i) => {
           if (!labelIndices.has(i)) return null;
           const label = new Date(p.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
           return (
@@ -434,6 +426,7 @@ export default function MePage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [expandedMedal, setExpandedMedal] = useState<string | null>(null);
+  const [chartLimit, setChartLimit] = useState(20);
   const [streak, setStreak] = useState(0);
 
   // Crop modal state
@@ -633,30 +626,47 @@ export default function MePage() {
         </section>
       )}
 
+      {/* Avg place + placement trend — own section */}
+      {stats && stats.avgPlace !== null && (
+        <section className="rounded-2xl border border-white/10 bg-[#0a0f1e] p-5">
+          <div className="mb-4 flex items-baseline justify-between">
+            <span className="text-sm text-slate-400">Avg. place</span>
+            <span className="text-2xl font-bold text-white">{stats.avgPlace.toFixed(1)}</span>
+          </div>
+          {stats.placements.length >= 3 && (
+            <>
+              <div className="mb-3 flex items-center justify-between">
+                <p className="text-xs text-slate-600 uppercase tracking-wider">Placement Trend</p>
+                <div className="flex rounded-lg border border-white/10 p-0.5 text-xs">
+                  {([10, 20, 50] as const).map((n) => (
+                    <button
+                      key={n}
+                      onClick={() => setChartLimit(n)}
+                      className={`rounded-md px-2 py-0.5 font-medium transition-colors ${
+                        chartLimit === n ? 'bg-white/15 text-white' : 'text-slate-500 hover:text-slate-300'
+                      }`}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <PlacementChart placements={stats.placements} limit={chartLimit} />
+            </>
+          )}
+        </section>
+      )}
+
       {/* All-time stats */}
       {stats && (
         <section className="rounded-2xl border border-white/10 bg-[#0a0f1e] p-5">
           <h2 className="mb-4 text-xs font-semibold uppercase tracking-widest text-slate-500">All-Time</h2>
 
-          {/* WODs logged + avg place */}
+          {/* WODs logged */}
           <div className="mb-4 flex items-baseline justify-between border-b border-white/5 pb-4">
             <span className="text-sm text-slate-400">WODs logged</span>
             <span className="text-2xl font-bold text-white">{stats.wodsLogged}</span>
           </div>
-          {stats.avgPlace !== null && (
-            <div className="mb-4 flex items-baseline justify-between border-b border-white/5 pb-4">
-              <span className="text-sm text-slate-400">Avg. place</span>
-              <span className="text-2xl font-bold text-white">{stats.avgPlace.toFixed(1)}</span>
-            </div>
-          )}
-
-          {/* Placement trend chart — lives next to avg place */}
-          {stats.placements.length >= 3 && (
-            <div className="mb-4 border-b border-white/5 pb-4">
-              <p className="mb-2 text-xs text-slate-600 uppercase tracking-wider">Placement Trend</p>
-              <PlacementChart placements={stats.placements} />
-            </div>
-          )}
 
           {/* Daily medals */}
           <p className="mb-2 text-xs text-slate-600 uppercase tracking-wider">Daily</p>

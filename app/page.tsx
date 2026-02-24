@@ -479,11 +479,11 @@ export default function HomePage() {
         const rank = myIdx >= 0 ? myIdx + 1 : null;
         const name = meProfile?.display_name ?? '';
         const stayHard = name ? `Stay Hard, ${name} 💪` : 'Stay Hard 💪';
-        const streakLine = newStreak > 1 ? ` · 🔥 ${newStreak}-day streak` : '';
-        if (rank === 1) { fireConfetti(1); setSubmitMsg(`🥇 1st place! ${stayHard}${streakLine}`); }
-        else if (rank === 2) { fireConfetti(2); setSubmitMsg(`🥈 2nd place! ${stayHard}${streakLine}`); }
-        else if (rank === 3) { fireConfetti(3); setSubmitMsg(`🥉 3rd place! ${stayHard}${streakLine}`); }
-        else setSubmitMsg(`✓ ${stayHard}${streakLine}`);
+        const streakLine = newStreak > 1 ? `\n🔥 ${newStreak}-day streak` : '';
+        if (rank === 1) { fireConfetti(1); setSubmitMsg(`🥇 1st place!\n${stayHard}${streakLine}`); }
+        else if (rank === 2) { fireConfetti(2); setSubmitMsg(`🥈 2nd place!\n${stayHard}${streakLine}`); }
+        else if (rank === 3) { fireConfetti(3); setSubmitMsg(`🥉 3rd place!\n${stayHard}${streakLine}`); }
+        else setSubmitMsg(`${stayHard}${streakLine}`);
       } else {
         // Submitted for someone else — close the add-for-other form
         setAddingForOther(false);
@@ -508,7 +508,7 @@ export default function HomePage() {
     setStreak(newStreak);
     const name = meProfile?.display_name ?? '';
     const stayHard = name ? `Stay Hard, ${name} 💪` : 'Stay Hard 💪';
-    setSubmitMsg(newStreak > 1 ? `✓ ${stayHard} · 🔥 ${newStreak}-day streak` : `✓ ${stayHard}`);
+    setSubmitMsg(newStreak > 1 ? `${stayHard}\n🔥 ${newStreak}-day streak` : stayHard);
     attendingRef.current = false;
   };
 
@@ -699,7 +699,7 @@ export default function HomePage() {
               )}
               {submitMsg && (
                 <div className="mt-3 text-center space-y-0.5">
-                  {submitMsg.split(' · ').map((line, i) => (
+                  {submitMsg.split('\n').map((line, i) => (
                     <p key={i} className={`font-medium text-green-400 ${i === 0 ? 'text-sm' : 'text-xs text-slate-400'}`}>{line}</p>
                   ))}
                 </div>
@@ -902,7 +902,7 @@ export default function HomePage() {
           )}
           {submitMsg && (
             <div className="mt-3 text-center space-y-0.5">
-              {submitMsg.split(' · ').map((line, i) => (
+              {submitMsg.split('\n').map((line, i) => (
                 <p key={i} className={`font-medium text-green-400 ${i === 0 ? 'text-sm' : 'text-xs text-slate-400'}`}>{line}</p>
               ))}
             </div>
