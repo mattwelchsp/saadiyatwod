@@ -186,7 +186,7 @@ function computePoints(
       gold: pts.gold,
       silver: pts.silver,
       bronze: pts.bronze,
-      total: pts.gold * 3 + pts.silver * 2 + pts.bronze,
+      total: pts.gold * 3 + pts.silver * 2 + pts.bronze + (rxMap.get(id)?.length ?? 0) * 0.5,
       rxCount: rxMap.get(id)?.length ?? 0,
       rxDates: (rxMap.get(id) ?? []).sort(),
     });
@@ -199,6 +199,11 @@ function computePoints(
     if (b.bronze !== a.bronze) return b.bronze - a.bronze;
     return a.display_name.localeCompare(b.display_name);
   });
+}
+
+/** Format points: whole numbers without decimal, halves with one decimal place */
+function formatPts(n: number): string {
+  return n % 1 === 0 ? String(n) : n.toFixed(1);
 }
 
 // ── Component ──────────────────────────────────────────────────────────────────
@@ -315,7 +320,8 @@ export default function MonthlyPage() {
       {/* Explanation */}
       <div className="rounded-2xl border border-white/10 bg-[#0a0f1e] px-4 py-3 text-center">
         <p className="text-xs text-slate-400">
-          Top 3 finishers each day earn points — 🥇 3 pts, 🥈 2 pts, 🥉 1 pt.
+          Top 3 each day earn points — 🥇 3 pts, 🥈 2 pts, 🥉 1 pt.
+          {' '}Every <span className="font-semibold text-yellow-400">RX</span> submission earns an extra <span className="font-semibold text-yellow-400">+0.5 pt</span>.
           {view === 'month' ? ' Most points by end of month takes the crown.' : ' Most points this week wins.'}
         </p>
       </div>
@@ -333,13 +339,13 @@ export default function MonthlyPage() {
           <table className="w-full text-left text-sm">
             <thead className="bg-white/5 text-xs text-slate-500">
               <tr>
-                <th className="px-4 py-2.5">#</th>
-                <th className="px-4 py-2.5">Athlete</th>
-                <th className="px-3 py-2.5 text-center">🥇</th>
-                <th className="px-3 py-2.5 text-center">🥈</th>
-                <th className="px-3 py-2.5 text-center">🥉</th>
-                <th className="px-3 py-2.5 text-center text-yellow-500/70">RX</th>
-                <th className="px-4 py-2.5 text-right">Pts</th>
+                <th className="w-6 px-2 py-2.5 text-center">#</th>
+                <th className="px-3 py-2.5">Athlete</th>
+                <th className="w-7 px-1 py-2.5 text-center">🥇</th>
+                <th className="w-7 px-1 py-2.5 text-center">🥈</th>
+                <th className="w-7 px-1 py-2.5 text-center">🥉</th>
+                <th className="w-8 px-1 py-2.5 text-center text-yellow-500/70 text-xs">RX</th>
+                <th className="w-10 px-2 py-2.5 text-right">Pts</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
@@ -348,25 +354,25 @@ export default function MonthlyPage() {
                 return (
                   <>
                     <tr key={r.id} className={isMe ? 'bg-white/10' : 'hover:bg-white/5'}>
-                      <td className="w-10 px-4 py-3 text-slate-500 text-xs">{idx + 1}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2.5">
+                      <td className="w-6 px-2 py-3 text-center text-slate-500 text-xs">{idx + 1}</td>
+                      <td className="px-3 py-3">
+                        <div className="flex items-center gap-2">
                           {r.avatar_url ? (
-                            <img src={r.avatar_url} alt="" className="h-7 w-7 rounded-full object-cover" />
+                            <img src={r.avatar_url} alt="" className="h-6 w-6 flex-shrink-0 rounded-full object-cover" />
                           ) : (
-                            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-xs font-bold">
+                            <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-white/10 text-xs font-bold">
                               {(r.display_name ?? '?')[0]?.toUpperCase()}
                             </div>
                           )}
-                          <Link href={`/profile/${r.id}`} className={`font-medium ${isMe ? 'text-white' : 'text-slate-200'} hover:text-white`}>
+                          <Link href={`/profile/${r.id}`} className={`truncate font-medium ${isMe ? 'text-white' : 'text-slate-200'} hover:text-white`}>
                             {r.display_name}
                           </Link>
                         </div>
                       </td>
-                      <td className="px-3 py-3 text-center text-base">{r.gold || '—'}</td>
-                      <td className="px-3 py-3 text-center text-base">{r.silver || '—'}</td>
-                      <td className="px-3 py-3 text-center text-base">{r.bronze || '—'}</td>
-                      <td className="px-3 py-3 text-center">
+                      <td className="w-7 px-1 py-3 text-center text-sm">{r.gold || '—'}</td>
+                      <td className="w-7 px-1 py-3 text-center text-sm">{r.silver || '—'}</td>
+                      <td className="w-7 px-1 py-3 text-center text-sm">{r.bronze || '—'}</td>
+                      <td className="w-8 px-1 py-3 text-center">
                         {r.rxCount > 0 ? (
                           <button
                             onClick={() => setExpandedRxId(expandedRxId === r.id ? null : r.id)}
@@ -375,10 +381,10 @@ export default function MonthlyPage() {
                             {r.rxCount}
                           </button>
                         ) : (
-                          <span className="text-slate-700">—</span>
+                          <span className="text-slate-700 text-xs">—</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-right font-bold text-white">{r.total}</td>
+                      <td className="w-10 px-2 py-3 text-right font-bold text-white">{formatPts(r.total)}</td>
                     </tr>
                     {expandedRxId === r.id && r.rxDates.length > 0 && (
                       <tr key={`${r.id}-rx`} className="bg-yellow-500/5">

@@ -53,6 +53,7 @@ type ScoreRaw = {
   amrap_rounds: number | null;
   amrap_reps: number | null;
   team_id: string | null;
+  is_rx: boolean;
 };
 
 type WodRaw = {
@@ -166,7 +167,7 @@ function rankForDate(scores: ScoreRaw[], type: WorkoutType): string[][] {
   return bands;
 }
 
-/** Compute points per athlete for a set of wods + scores. Returns map: athleteId → {gold,silver,bronze} */
+/** Compute points per athlete for a set of wods + scores. Returns map: athleteId → {gold,silver,bronze,total} */
 function computeMonthlyPoints(
   wods: WodRaw[],
   scores: ScoreRaw[]
@@ -176,6 +177,18 @@ function computeMonthlyPoints(
     if (!map.has(id)) map.set(id, { gold: 0, silver: 0, bronze: 0, total: 0 });
     return map.get(id)!;
   };
+
+  // Build rxMap: athleteId → set of dates they submitted Rx on a scored WOD
+  const rxMap = new Map<string, Set<string>>();
+  for (const s of scores) {
+    if (!s.is_rx || !s.athlete_id) continue;
+    const wod = wods.find((w) => w.wod_date === s.wod_date);
+    if (!wod) continue;
+    const t = getEffectiveType(wod);
+    if (t === 'NO_SCORE' || t === 'UNKNOWN') continue;
+    if (!rxMap.has(s.athlete_id)) rxMap.set(s.athlete_id, new Set());
+    rxMap.get(s.athlete_id)!.add(s.wod_date);
+  }
 
   for (const wod of wods) {
     const type = getEffectiveType(wod);
@@ -195,6 +208,13 @@ function computeMonthlyPoints(
       rank += band.length;
     }
   }
+
+  // Add Rx bonus: +0.5 per Rx submission per unique date
+  for (const [id, dates] of rxMap) {
+    const e = ensure(id);
+    e.total += dates.size * 0.5;
+  }
+
   return map;
 }
 
@@ -499,7 +519,7 @@ export default function MePage() {
       // All scores for all their active dates (for ranking)
       const { data: allScoreRows } = await supabase
         .from('scores')
-        .select('wod_date, athlete_id, time_seconds, amrap_rounds, amrap_reps, team_id')
+        .select('wod_date, athlete_id, time_seconds, amrap_rounds, amrap_reps, team_id, is_rx')
         .in('wod_date', myDates);
 
       if (allScoreRows && wodRows) {
