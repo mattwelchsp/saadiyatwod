@@ -77,6 +77,26 @@ function sortScores(rows: Score[], type: WorkoutType): Score[] {
   return copy;
 }
 
+/** Returns a rank per sorted score, sharing rank on ties (e.g. 1,2,2,4 not 1,2,2,3) */
+function computeDisplayRanks(sorted: Score[], type: WorkoutType): number[] {
+  const ranks: number[] = [];
+  for (let i = 0; i < sorted.length; i++) {
+    if (i === 0) { ranks.push(1); continue; }
+    const prev = sorted[i - 1];
+    const cur  = sorted[i];
+    let tied = false;
+    if (type === 'TIME') {
+      tied = (cur.time_seconds ?? Infinity) === (prev.time_seconds ?? Infinity);
+    } else if (type === 'AMRAP' || type === 'CALORIES') {
+      const vCur  = (cur.amrap_rounds  ?? -1) * 10000 + (cur.amrap_reps  ?? -1);
+      const vPrev = (prev.amrap_rounds ?? -1) * 10000 + (prev.amrap_reps ?? -1);
+      tied = vCur === vPrev;
+    }
+    ranks.push(tied ? ranks[i - 1] : i + 1);
+  }
+  return ranks;
+}
+
 function groupTeams(scores: Score[]): Score[][] {
   const groups = new Map<string, Score[]>();
   const solo: Score[] = [];
@@ -963,7 +983,10 @@ export default function HomePage() {
                           <span className="text-xs text-slate-600">(guest)</span>
                         </div>
                       ))}
-                      <span className="mt-0.5 text-xs text-slate-500">{rep.is_rx ? 'Rx' : 'Scaled'}</span>
+                      {rep.is_rx
+                        ? <span className="mt-0.5 inline-block rounded-md bg-yellow-500/20 px-1.5 py-0.5 text-xs font-bold text-yellow-400 ring-1 ring-yellow-500/40">RX</span>
+                        : <span className="mt-0.5 text-xs text-slate-600">Scaled</span>
+                      }
                     </div>
                     <span className="flex-shrink-0 text-sm font-bold text-white">{scoreDisplay(rep, type)}</span>
                   </div>
@@ -983,39 +1006,46 @@ export default function HomePage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
-                {scores.map((s, idx) => {
-                  const isMe = s.athlete_id === meId;
-                  return (
-                    <tr key={s.id} className={isMe ? 'bg-white/10' : 'hover:bg-white/5'}>
-                      <td className="w-10 px-4 py-3 text-slate-400 text-sm">
-                        {MEDALS[idx] ?? <span className="text-xs text-slate-500">{idx + 1}</span>}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2.5">
-                          {s.avatar_url && !s.guest_athlete_name ? (
-                            <img src={s.avatar_url} alt="" className="h-7 w-7 rounded-full object-cover" />
-                          ) : (
-                            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-xs font-bold">
-                              {(s.guest_athlete_name ?? s.display_name ?? '?')[0]?.toUpperCase()}
+                {(() => {
+                  const displayRanks = computeDisplayRanks(scores, type);
+                  return scores.map((s, idx) => {
+                    const isMe = s.athlete_id === meId;
+                    const rank = displayRanks[idx];
+                    return (
+                      <tr key={s.id} className={isMe ? 'bg-white/10' : 'hover:bg-white/5'}>
+                        <td className="w-10 px-4 py-3 text-slate-400 text-sm">
+                          {MEDALS[rank - 1] ?? <span className="text-xs text-slate-500">{rank}</span>}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2.5">
+                            {s.avatar_url && !s.guest_athlete_name ? (
+                              <img src={s.avatar_url} alt="" className="h-7 w-7 rounded-full object-cover" />
+                            ) : (
+                              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-xs font-bold">
+                                {(s.guest_athlete_name ?? s.display_name ?? '?')[0]?.toUpperCase()}
+                              </div>
+                            )}
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <p className={`font-medium ${isMe ? 'text-white' : 'text-slate-100'}`}>
+                                  {s.guest_athlete_name ?? s.display_name ?? 'Unknown'}
+                                </p>
+                                {s.is_rx && (
+                                  <span className="rounded-md bg-yellow-500/20 px-1.5 py-0.5 text-xs font-bold text-yellow-400 ring-1 ring-yellow-500/40">RX</span>
+                                )}
+                                {s.guest_athlete_name && (
+                                  <span className="rounded-full border border-white/10 px-1.5 py-0.5 text-xs text-slate-500">guest</span>
+                                )}
+                              </div>
+                              {!s.is_rx && <p className="text-xs text-slate-600">Scaled</p>}
                             </div>
-                          )}
-                          <div>
-                            <div className="flex items-center gap-1.5">
-                              <p className={`font-medium ${isMe ? 'text-white' : 'text-slate-100'}`}>
-                                {s.guest_athlete_name ?? s.display_name ?? 'Unknown'}
-                              </p>
-                              {s.guest_athlete_name && (
-                                <span className="rounded-full border border-white/10 px-1.5 py-0.5 text-xs text-slate-500">guest</span>
-                              )}
-                            </div>
-                            <p className="text-xs text-slate-600">{s.is_rx ? 'Rx' : 'Scaled'}</p>
                           </div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-right font-bold text-white">{scoreDisplay(s, type)}</td>
-                    </tr>
-                  );
-                })}
+                        </td>
+                        <td className="px-4 py-3 text-right font-bold text-white">{scoreDisplay(s, type)}</td>
+                      </tr>
+                    );
+                  });
+                })()}
               </tbody>
             </table>
           </div>
