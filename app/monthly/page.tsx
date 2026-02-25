@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import Link from 'next/link';
 import { supabase } from '../../lib/supabase';
 import { detectWorkoutTypeFromWodText, formatSeconds, WorkoutType } from '../../lib/wodType';
 import { todayInTZ } from '../../lib/timezone';
@@ -37,6 +38,8 @@ type AthletePoints = {
   silver: number;
   bronze: number;
   total: number;
+  rxCount: number;
+  rxDates: string[];
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -118,6 +121,18 @@ function computePoints(
     return pointsMap.get(id)!;
   };
 
+  // Build rxMap tracking which dates each athlete submitted an Rx score
+  const rxMap = new Map<string, string[]>();
+  for (const s of allScores) {
+    if (!s.is_rx || !s.athlete_id) continue;
+    const wod = wods.find((w) => w.wod_date === s.wod_date);
+    if (!wod) continue;
+    const t = effectiveType(wod);
+    if (t === 'NO_SCORE' || t === 'UNKNOWN') continue;
+    if (!rxMap.has(s.athlete_id)) rxMap.set(s.athlete_id, []);
+    rxMap.get(s.athlete_id)!.push(s.wod_date);
+  }
+
   for (const wod of wods) {
     const type = effectiveType(wod);
     const scoresForDate = allScores.filter((s) => s.wod_date === wod.wod_date);
@@ -172,6 +187,8 @@ function computePoints(
       silver: pts.silver,
       bronze: pts.bronze,
       total: pts.gold * 3 + pts.silver * 2 + pts.bronze,
+      rxCount: rxMap.get(id)?.length ?? 0,
+      rxDates: (rxMap.get(id) ?? []).sort(),
     });
   });
 
@@ -211,6 +228,7 @@ export default function MonthlyPage() {
   const [meId, setMeId] = useState<string | null>(null);
   const [rows, setRows] = useState<AthletePoints[]>([]);
   const [loading, setLoading] = useState(true);
+  const [expandedRxId, setExpandedRxId] = useState<string | null>(null);
 
   const loadRange = useCallback(async (from: string, to: string, cutoffDate: string | null) => {
     setLoading(true);
@@ -320,6 +338,7 @@ export default function MonthlyPage() {
                 <th className="px-3 py-2.5 text-center">🥇</th>
                 <th className="px-3 py-2.5 text-center">🥈</th>
                 <th className="px-3 py-2.5 text-center">🥉</th>
+                <th className="px-3 py-2.5 text-center text-yellow-500/70">RX</th>
                 <th className="px-4 py-2.5 text-right">Pts</th>
               </tr>
             </thead>
@@ -327,25 +346,54 @@ export default function MonthlyPage() {
               {rows.map((r, idx) => {
                 const isMe = r.id === meId;
                 return (
-                  <tr key={r.id} className={isMe ? 'bg-white/10' : 'hover:bg-white/5'}>
-                    <td className="w-10 px-4 py-3 text-slate-500 text-xs">{idx + 1}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2.5">
-                        {r.avatar_url ? (
-                          <img src={r.avatar_url} alt="" className="h-7 w-7 rounded-full object-cover" />
+                  <>
+                    <tr key={r.id} className={isMe ? 'bg-white/10' : 'hover:bg-white/5'}>
+                      <td className="w-10 px-4 py-3 text-slate-500 text-xs">{idx + 1}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2.5">
+                          {r.avatar_url ? (
+                            <img src={r.avatar_url} alt="" className="h-7 w-7 rounded-full object-cover" />
+                          ) : (
+                            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-xs font-bold">
+                              {(r.display_name ?? '?')[0]?.toUpperCase()}
+                            </div>
+                          )}
+                          <Link href={`/profile/${r.id}`} className={`font-medium ${isMe ? 'text-white' : 'text-slate-200'} hover:text-white`}>
+                            {r.display_name}
+                          </Link>
+                        </div>
+                      </td>
+                      <td className="px-3 py-3 text-center text-base">{r.gold || '—'}</td>
+                      <td className="px-3 py-3 text-center text-base">{r.silver || '—'}</td>
+                      <td className="px-3 py-3 text-center text-base">{r.bronze || '—'}</td>
+                      <td className="px-3 py-3 text-center">
+                        {r.rxCount > 0 ? (
+                          <button
+                            onClick={() => setExpandedRxId(expandedRxId === r.id ? null : r.id)}
+                            className={`text-sm font-medium transition-colors ${expandedRxId === r.id ? 'text-yellow-400' : 'text-yellow-500/70 hover:text-yellow-400'}`}
+                          >
+                            {r.rxCount}
+                          </button>
                         ) : (
-                          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-xs font-bold">
-                            {(r.display_name ?? '?')[0]?.toUpperCase()}
-                          </div>
+                          <span className="text-slate-700">—</span>
                         )}
-                        <span className={`font-medium ${isMe ? 'text-white' : 'text-slate-200'}`}>{r.display_name}</span>
-                      </div>
-                    </td>
-                    <td className="px-3 py-3 text-center text-base">{r.gold || '—'}</td>
-                    <td className="px-3 py-3 text-center text-base">{r.silver || '—'}</td>
-                    <td className="px-3 py-3 text-center text-base">{r.bronze || '—'}</td>
-                    <td className="px-4 py-3 text-right font-bold text-white">{r.total}</td>
-                  </tr>
+                      </td>
+                      <td className="px-4 py-3 text-right font-bold text-white">{r.total}</td>
+                    </tr>
+                    {expandedRxId === r.id && r.rxDates.length > 0 && (
+                      <tr key={`${r.id}-rx`} className="bg-yellow-500/5">
+                        <td colSpan={7} className="px-4 py-2">
+                          <div className="flex flex-wrap gap-1.5">
+                            {r.rxDates.map((d) => (
+                              <span key={d} className="rounded-lg bg-yellow-500/15 px-2 py-0.5 text-xs text-yellow-400">
+                                {new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </>
                 );
               })}
             </tbody>

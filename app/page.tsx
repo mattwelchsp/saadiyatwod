@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+import Link from 'next/link';
 import confetti from 'canvas-confetti';
 import { supabase } from '../lib/supabase';
 import { detectWorkoutTypeFromWodText, parseTimeInput, formatSeconds, WorkoutType } from '../lib/wodType';
@@ -1027,9 +1028,15 @@ export default function HomePage() {
                             )}
                             <div>
                               <div className="flex items-center gap-1.5">
-                                <p className={`font-medium ${isMe ? 'text-white' : 'text-slate-100'}`}>
-                                  {s.guest_athlete_name ?? s.display_name ?? 'Unknown'}
-                                </p>
+                                {s.guest_athlete_name ? (
+                                  <p className={`font-medium ${isMe ? 'text-white' : 'text-slate-100'}`}>
+                                    {s.guest_athlete_name}
+                                  </p>
+                                ) : (
+                                  <Link href={`/profile/${s.athlete_id}`} className="font-medium text-slate-100 hover:text-white">
+                                    {s.display_name ?? 'Unknown'}
+                                  </Link>
+                                )}
                                 {s.is_rx && (
                                   <span className="rounded-md bg-yellow-500/20 px-1.5 py-0.5 text-xs font-bold text-yellow-400 ring-1 ring-yellow-500/40">RX</span>
                                 )}
