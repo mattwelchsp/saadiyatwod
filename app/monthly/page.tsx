@@ -94,7 +94,15 @@ function rankForDate(scores: ScoreRaw[], type: WorkoutType): string[][] {
     i = j;
   }
 
-  return ranks.slice(0, 3); // only top 3 medal positions
+  // Return only bands whose rank is ≤ 3 (ties shift ranks, so stop when rank > 3)
+  const scoringBands: string[][] = [];
+  let rank = 1;
+  for (const band of ranks) {
+    if (rank > 3) break;
+    scoringBands.push(band);
+    rank += band.length;
+  }
+  return scoringBands;
 }
 
 function computePoints(
@@ -127,11 +135,11 @@ function computePoints(
     const representatives = [...Array.from(teamMap.values()), ...individuals];
 
     const rankBands = rankForDate(representatives, type);
-    const pts = [3, 2, 1];
+    let rank = 1;
 
-    rankBands.forEach((band, rankIdx) => {
-      const p = pts[rankIdx] ?? 0;
-      if (p === 0) return;
+    for (const band of rankBands) {
+      const p = rank === 1 ? 3 : rank === 2 ? 2 : rank === 3 ? 1 : 0;
+      if (p === 0) break;
 
       for (const athleteId of band) {
         const rep = scoresForDate.find((s) => s.athlete_id === athleteId);
@@ -149,7 +157,8 @@ function computePoints(
           else entry.bronze++;
         }
       }
-    });
+      rank += band.length;
+    }
   }
 
   const result: AthletePoints[] = [];

@@ -140,7 +140,8 @@ function rankForDate(scores: ScoreRaw[], type: WorkoutType): string[][] {
 
   const bands: string[][] = [];
   let i = 0;
-  while (i < sorted.length && bands.length < 3) {
+  let rank = 1;
+  while (i < sorted.length && rank <= 3) {
     const cur = sorted[i];
     const band: string[] = [];
     let j = i;
@@ -159,6 +160,7 @@ function rankForDate(scores: ScoreRaw[], type: WorkoutType): string[][] {
       j++;
     }
     bands.push([...new Set(band)]);
+    rank += band.length; // advance by tie group size, not just 1
     i = j;
   }
   return bands;
@@ -179,10 +181,10 @@ function computeMonthlyPoints(
     const type = getEffectiveType(wod);
     const dayScores = scores.filter((s) => s.wod_date === wod.wod_date);
     const bands = rankForDate(dayScores, type);
-    const pts = [3, 2, 1];
-    bands.forEach((band, idx) => {
-      const p = pts[idx] ?? 0;
-      if (!p) return;
+    let rank = 1;
+    for (const band of bands) {
+      const p = rank === 1 ? 3 : rank === 2 ? 2 : rank === 3 ? 1 : 0;
+      if (!p) break;
       for (const id of band) {
         const e = ensure(id);
         if (p === 3) e.gold++;
@@ -190,7 +192,8 @@ function computeMonthlyPoints(
         else e.bronze++;
         e.total += p;
       }
-    });
+      rank += band.length;
+    }
   }
   return map;
 }
@@ -656,23 +659,19 @@ export default function MePage() {
         <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
       </section>
 
-      {/* Streak + this month — moved above all-time stats */}
-      {(streak > 0 || (stats && stats.thisMonthCount > 0)) && (
+      {/* Streak + this month — always shown once stats loaded */}
+      {stats && (
         <section className="grid grid-cols-2 gap-3">
-          {streak > 0 && (
-            <div className="rounded-2xl border border-white/10 bg-[#0a0f1e] px-4 py-4 text-center">
-              <p className="text-2xl">🔥</p>
-              <p className="mt-1 text-2xl font-bold text-white">{streak}</p>
-              <p className="mt-0.5 text-xs text-slate-500">day streak</p>
-            </div>
-          )}
-          {stats && stats.thisMonthCount > 0 && (
-            <div className="rounded-2xl border border-white/10 bg-[#0a0f1e] px-4 py-4 text-center">
-              <p className="text-2xl">📅</p>
-              <p className="mt-1 text-2xl font-bold text-white">{stats.thisMonthCount}</p>
-              <p className="mt-0.5 text-xs text-slate-500">WODs this month</p>
-            </div>
-          )}
+          <div className="rounded-2xl border border-white/10 bg-[#0a0f1e] px-4 py-4 text-center">
+            <p className="text-2xl">{streak > 0 ? '🔥' : '💤'}</p>
+            <p className="mt-1 text-2xl font-bold text-white">{streak}</p>
+            <p className="mt-0.5 text-xs text-slate-500">M–F streak</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-[#0a0f1e] px-4 py-4 text-center">
+            <p className="text-2xl">📅</p>
+            <p className="mt-1 text-2xl font-bold text-white">{stats.thisMonthCount}</p>
+            <p className="mt-0.5 text-xs text-slate-500">WODs this month</p>
+          </div>
         </section>
       )}
 
