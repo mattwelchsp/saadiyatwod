@@ -184,87 +184,70 @@ function fireConfetti(placement: 1 | 2 | 3) {
   confetti({ particleCount: placement === 1 ? 120 : placement === 2 ? 80 : 55, spread: 70, origin: { y: 0.65 }, colors });
 }
 
-// ── Teammate Picker ──────────────────────────────────────────────────────────
+// ── Team Slot Picker ─────────────────────────────────────────────────────────
 
-function TeammatePicker({
-  members, meId, selected, onToggle, guestNames, onAddGuest, onRemoveGuest,
+type TeamSlot = { value: string; guestName: string };
+
+function TeamSlotPicker({
+  teamSize, members, meId, slots, onSlotsChange,
 }: {
-  members: Profile[]; meId: string; selected: string[];
-  onToggle: (id: string) => void; guestNames: string[];
-  onAddGuest: (name: string) => void; onRemoveGuest: (name: string) => void;
+  teamSize: number; members: Profile[]; meId: string;
+  slots: TeamSlot[]; onSlotsChange: (slots: TeamSlot[]) => void;
 }) {
-  const [showGuestInput, setShowGuestInput] = useState(false);
-  const [guestInput, setGuestInput] = useState('');
+  // Ensure exactly teamSize slots with defaults
+  const normalised: TeamSlot[] = Array.from({ length: teamSize }, (_, i) =>
+    slots[i] ?? { value: i === 0 ? 'me' : '', guestName: '' }
+  );
 
-  const commitGuest = () => {
-    const name = guestInput.trim();
-    if (name && !guestNames.includes(name)) onAddGuest(name);
-    setGuestInput('');
+  const updateSlot = (idx: number, value: string) => {
+    onSlotsChange(normalised.map((s, i) =>
+      i === idx ? { value, guestName: value === 'guest' ? s.guestName : '' } : s
+    ));
+  };
+  const updateGuest = (idx: number, guestName: string) => {
+    onSlotsChange(normalised.map((s, i) => i === idx ? { ...s, guestName } : s));
   };
 
+  // IDs already chosen in OTHER slots (to prevent double-picking)
+  const usedIds = (slotIdx: number) =>
+    normalised.filter((s, i) => i !== slotIdx && s.value !== '' && s.value !== 'guest')
+      .map((s) => (s.value === 'me' ? meId : s.value));
+
   return (
-    <div className="mt-4 space-y-3">
-      <p className="text-xs text-slate-500">Teammates <span className="text-slate-600">(you are auto-included)</span></p>
-
-      {members.filter((m) => m.id !== meId).length > 0 && (
-        <div className="max-h-48 overflow-y-auto space-y-1 rounded-xl border border-white/10 bg-slate-900 p-2">
-          {members.filter((m) => m.id !== meId).map((m) => {
-            const active = selected.includes(m.id);
-            return (
-              <button key={m.id} type="button" onClick={() => onToggle(m.id)}
-                className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors ${active ? 'bg-white/15' : 'hover:bg-white/5'}`}>
-                {m.avatar_url ? (
-                  <img src={m.avatar_url} alt="" className="h-7 w-7 flex-shrink-0 rounded-full object-cover" />
-                ) : (
-                  <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-white/10 text-xs font-bold text-white">
-                    {(m.display_name ?? '?')[0]?.toUpperCase()}
-                  </div>
-                )}
-                <span className={`flex-1 text-sm ${active ? 'font-semibold text-white' : 'text-slate-300'}`}>
-                  {m.display_name ?? m.id}
-                </span>
-                {active && (
-                  <svg className="h-4 w-4 flex-shrink-0 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                  </svg>
-                )}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {guestNames.map((name) => (
-        <div key={name} className="flex items-center justify-between rounded-lg border border-white/10 bg-slate-900 px-3 py-2">
-          <div className="flex items-center gap-2">
-            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-xs font-bold text-slate-400">
-              {name[0]?.toUpperCase()}
+    <div className="mt-4 space-y-2">
+      <p className="text-xs text-slate-500">Team members</p>
+      <div className={`grid gap-2 ${teamSize <= 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+        {normalised.map((slot, idx) => {
+          const taken = usedIds(idx);
+          const available = members.filter((m) => !taken.includes(m.id));
+          return (
+            <div key={idx} className="space-y-1.5">
+              <label className="block text-xs text-slate-600">Athlete {idx + 1}</label>
+              <select
+                value={slot.value}
+                onChange={(e) => updateSlot(idx, e.target.value)}
+                className="w-full rounded-xl border border-white/10 bg-slate-900 px-2 py-2 text-sm text-slate-100 focus:outline-none appearance-none"
+              >
+                <option value="">— pick —</option>
+                <option value="me">{members.find((m) => m.id === meId)?.display_name ?? 'Me'} (me)</option>
+                {available.filter((m) => m.id !== meId).map((m) => (
+                  <option key={m.id} value={m.id}>{m.display_name ?? 'Unknown'}</option>
+                ))}
+                <option value="guest">Guest / Visitor…</option>
+              </select>
+              {slot.value === 'guest' && (
+                <input
+                  type="text"
+                  value={slot.guestName}
+                  onChange={(e) => updateGuest(idx, e.target.value)}
+                  placeholder="Guest name (e.g. Sara K.)"
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-2 py-1.5 text-xs text-slate-100 placeholder-slate-600 focus:outline-none"
+                />
+              )}
             </div>
-            <span className="text-sm text-slate-300">{name}</span>
-            <span className="rounded-full border border-white/10 px-1.5 py-0.5 text-xs text-slate-500">guest</span>
-          </div>
-          <button type="button" onClick={() => onRemoveGuest(name)} className="text-slate-600 hover:text-slate-300">✕</button>
-        </div>
-      ))}
-
-      {!showGuestInput ? (
-        <button type="button" onClick={() => setShowGuestInput(true)}
-          className="text-xs text-slate-500 hover:text-slate-300 underline underline-offset-2">
-          + Partner not in the app?
-        </button>
-      ) : (
-        <div className="flex gap-2">
-          <input type="text" autoFocus value={guestInput}
-            onChange={(e) => setGuestInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitGuest(); } }}
-            placeholder="Their name (e.g. Sara K.)"
-            className="flex-1 rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none" />
-          <button type="button" onClick={commitGuest}
-            className="rounded-xl bg-white/10 px-3 py-2 text-sm font-medium text-white hover:bg-white/20">Add</button>
-          <button type="button" onClick={() => { setShowGuestInput(false); setGuestInput(''); }}
-            className="rounded-xl px-3 py-2 text-sm text-slate-500 hover:text-slate-300">Cancel</button>
-        </div>
-      )}
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -311,8 +294,7 @@ export default function HomePage() {
   const [calorieInput, setCalorieInput] = useState('');
   const [forAthleteId, setForAthleteId] = useState('me'); // 'me' | uuid | 'guest'
   const [forGuestName, setForGuestName] = useState('');
-  const [teamMates, setTeamMates] = useState<string[]>([]);
-  const [guestNames, setGuestNames] = useState<string[]>([]);
+  const [teamSlots, setTeamSlots] = useState<TeamSlot[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [submitMsg, setSubmitMsg] = useState<string | null>(null);
   const [submitErr, setSubmitErr] = useState<string | null>(null);
@@ -443,14 +425,70 @@ export default function HomePage() {
     }
 
     if (isTeamWod) {
-      const totalPartners = teamMates.length + guestNames.filter((n) => n.trim()).length;
-      if (totalPartners < 1) {
-        setSubmitErr('Add at least one teammate or guest partner');
+      // Build normalised slots (same logic as the picker)
+      const normSlots: TeamSlot[] = Array.from({ length: effectiveTeamSize }, (_, i) =>
+        teamSlots[i] ?? { value: i === 0 ? 'me' : '', guestName: '' }
+      );
+      const filled = normSlots.filter((s) => s.value !== '' && (s.value !== 'guest' || s.guestName.trim()));
+      if (filled.length < 2) {
+        setSubmitErr('Please select all team members before submitting');
         setSubmitting(false);
         return;
       }
+
+      // Insert one score row per slot
+      const sharedTeamId = crypto.randomUUID();
+      const basePayload = {
+        entered_by: meId, submitted_by: meId,
+        wod_date: today, is_rx: isRx, is_team: true, team_id: sharedTeamId,
+        time_seconds: timeSeconds, time_input: timeSeconds != null ? timeInput : null,
+        amrap_rounds: rounds, amrap_reps: reps,
+        amrap_input: rounds != null && type === 'AMRAP' ? `${rounds}+${reps}` : null,
+        guest_names: [] as string[],
+      };
+
+      let anyError = false;
+      for (const slot of normSlots) {
+        if (!slot.value) continue;
+        const athleteId = slot.value === 'me' ? meId : slot.value === 'guest' ? null : slot.value;
+        const guestAthlName = slot.value === 'guest' ? (slot.guestName.trim() || 'Guest') : null;
+        const { error } = await supabase.from('scores').insert({
+          ...basePayload, athlete_id: athleteId, guest_athlete_name: guestAthlName,
+        });
+        if (error) { setSubmitErr(error.message); anyError = true; break; }
+      }
+
+      if (!anyError) {
+        setTimeInput(''); setAmrapRounds(''); setAmrapReps(''); setCalorieInput('');
+        setTeamSlots([]); setEditing(false);
+        await supabase.from('attendance').upsert({ athlete_id: meId, wod_date: today }, { onConflict: 'athlete_id,wod_date' });
+        setAttended(true);
+        const freshScores = await loadDateData(today);
+        const { data: attendRows } = await supabase.from('attendance').select('wod_date').eq('athlete_id', meId);
+        const attendedSet = new Set((attendRows ?? []).map((r: any) => r.wod_date as string));
+        attendedSet.add(today);
+        setStreak(computeStreak(attendedSet, today));
+        const submittingForSelf = normSlots.some((s) => s.value === 'me');
+        if (submittingForSelf && type !== 'NO_SCORE' && type !== 'UNKNOWN') {
+          const sorted = sortScores(freshScores, type);
+          const myIdx = sorted.findIndex((s) => s.athlete_id === meId);
+          if (myIdx === 0) fireConfetti(1);
+          else if (myIdx === 1) fireConfetti(2);
+          else if (myIdx === 2) fireConfetti(3);
+        }
+        const names = normSlots.filter((s) => s.value !== '').map((s) => {
+          if (s.value === 'me') return members.find((m) => m.id === meId)?.display_name ?? 'Me';
+          if (s.value === 'guest') return s.guestName.trim() || 'Guest';
+          return members.find((m) => m.id === s.value)?.display_name ?? 'Teammate';
+        });
+        setSubmitMsg(`Score submitted!\n${names.join(' & ')}`);
+        setAddingForOther(false);
+      }
+      setSubmitting(false);
+      return;
     }
 
+    // ── Individual WOD submit ─────────────────────────────────────────────────
     // Determine effective athlete for individual WODs
     const isGuestSubmission = !isTeamWod && forAthleteId === 'guest';
     const guestName = isGuestSubmission ? (forGuestName.trim() || 'Visitor') : null;
@@ -459,15 +497,15 @@ export default function HomePage() {
       ? (forAthleteId === 'me' ? meId : forAthleteId === 'guest' ? null : forAthleteId)
       : meId;
 
-    const teamIds = isTeamWod ? Array.from(new Set([meId, ...teamMates])) : [effectiveAthleteId!];
-    const teamId = isTeamWod ? crypto.randomUUID() : null;
-    const cleanGuests = guestNames.filter((n) => n.trim());
+    const teamIds = [effectiveAthleteId!];
+    const teamId = null;
+    const cleanGuests: string[] = [];
 
     let anyError = false;
-    for (const athleteId of (isTeamWod ? teamIds : [effectiveAthleteId!])) {
+    for (const athleteId of teamIds) {
       const payload: any = {
         athlete_id: athleteId, entered_by: meId, submitted_by: meId,
-        wod_date: today, is_rx: isRx, is_team: isTeamWod, team_id: teamId,
+        wod_date: today, is_rx: isRx, is_team: false, team_id: teamId,
         time_seconds: timeSeconds, time_input: timeSeconds != null ? timeInput : null,
         amrap_rounds: rounds, amrap_reps: reps,
         amrap_input: rounds != null && type === 'AMRAP' ? `${rounds}+${reps}` : null,
@@ -486,7 +524,7 @@ export default function HomePage() {
     if (!anyError) {
       setTimeInput(''); setAmrapRounds(''); setAmrapReps(''); setCalorieInput('');
       setForAthleteId('me'); setForGuestName('');
-      setTeamMates([]); setGuestNames([]); setEditing(false);
+      setTeamSlots([]); setEditing(false);
 
       // Log attendance for the submitter
       await supabase.from('attendance').upsert({ athlete_id: meId, wod_date: today }, { onConflict: 'athlete_id,wod_date' });
@@ -552,7 +590,7 @@ export default function HomePage() {
     setAttended(false);
     setTimeInput(''); setAmrapRounds(''); setAmrapReps(''); setCalorieInput('');
     setForAthleteId('me'); setForGuestName('');
-    setTeamMates([]); setGuestNames([]);
+    setTeamSlots([]);
   };
 
   if (initialLoading) {
@@ -914,12 +952,13 @@ export default function HomePage() {
                   className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none" />
               )}
               {isTeam && (
-                <TeammatePicker members={members} meId={meId}
-                  selected={teamMates}
-                  onToggle={(id) => setTeamMates((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id])}
-                  guestNames={guestNames}
-                  onAddGuest={(name) => setGuestNames((p) => [...p, name])}
-                  onRemoveGuest={(name) => setGuestNames((p) => p.filter((n) => n !== name))} />
+                <TeamSlotPicker
+                  teamSize={effectiveTeamSize}
+                  members={members}
+                  meId={meId}
+                  slots={teamSlots}
+                  onSlotsChange={setTeamSlots}
+                />
               )}
               <button onClick={() => handleSubmit(editing)} disabled={submitting}
                 className="mt-3 w-full rounded-xl bg-white py-2.5 text-sm font-semibold text-black hover:bg-slate-200 disabled:opacity-40">
@@ -974,19 +1013,25 @@ export default function HomePage() {
                   <div className="flex items-center gap-3">
                     <span className="w-8 flex-shrink-0 text-center text-xl">{MEDALS[idx] ?? <span className="text-sm text-slate-500">{idx + 1}</span>}</span>
                     <div className="flex flex-1 flex-col gap-1">
-                      {group.map((s) => (
-                        <div key={s.id} className="flex items-center gap-2">
-                          {s.avatar_url ? (
-                            <img src={s.avatar_url} alt="" className="h-6 w-6 rounded-full object-cover" />
-                          ) : (
-                            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-white/10 text-xs font-bold">
-                              {(s.display_name ?? '?')[0]?.toUpperCase()}
-                            </div>
-                          )}
-                          <span className="text-sm text-slate-200">{s.display_name ?? 'Unknown'}</span>
-                        </div>
-                      ))}
-                      {guests.map((g) => (
+                      {group.map((s) => {
+                        const name = s.guest_athlete_name ?? s.display_name;
+                        const isGuest = !s.athlete_id || !!s.guest_athlete_name;
+                        return (
+                          <div key={s.id} className="flex items-center gap-2">
+                            {!isGuest && s.avatar_url ? (
+                              <img src={s.avatar_url} alt="" className="h-6 w-6 rounded-full object-cover" />
+                            ) : (
+                              <div className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${isGuest ? 'bg-white/5 text-slate-500' : 'bg-white/10'}`}>
+                                {(name ?? '?')[0]?.toUpperCase()}
+                              </div>
+                            )}
+                            <span className={`text-sm ${isGuest ? 'text-slate-400' : 'text-slate-200'}`}>{name ?? 'Unknown'}</span>
+                            {isGuest && <span className="text-xs text-slate-600">(guest)</span>}
+                          </div>
+                        );
+                      })}
+                      {/* legacy: guests stored in guest_names array on older entries */}
+                      {guests.filter((g) => !group.some((s) => s.guest_athlete_name === g)).map((g) => (
                         <div key={g} className="flex items-center gap-2">
                           <div className="flex h-6 w-6 items-center justify-center rounded-full bg-white/5 text-xs text-slate-500">
                             {g[0]?.toUpperCase()}
