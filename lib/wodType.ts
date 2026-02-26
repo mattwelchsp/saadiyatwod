@@ -60,6 +60,26 @@ export function detectWorkoutTypeFromWodText(
   return 'TIME';
 }
 
+/**
+ * Detect if a WOD is a team workout from its text.
+ * Looks for patterns like "teams of 2", "teams of 3", "with a partner", etc.
+ */
+export function detectTeamFromWodText(rawText: string | null | undefined): { isTeam: boolean; teamSize: number } {
+  const text = (rawText ?? '').toLowerCase();
+  if (!text) return { isTeam: false, teamSize: 2 };
+
+  // "teams of N" or "in teams of N"
+  const teamsOf = /\bteams?\s+of\s+(\d+)/.exec(text);
+  if (teamsOf) return { isTeam: true, teamSize: parseInt(teamsOf[1], 10) };
+
+  // "partner" based patterns
+  if (/\bpartner\s+wod\b/.test(text) || /\bwith\s+a\s+partner\b/.test(text) || /\bpartner\s+workout\b/.test(text)) {
+    return { isTeam: true, teamSize: 2 };
+  }
+
+  return { isTeam: false, teamSize: 2 };
+}
+
 /** Parse "mm:ss" into total seconds. Returns null on bad input. */
 export function parseTimeInput(raw: string): number | null {
   const m = /^(\d{1,2}):(\d{2})$/.exec(raw.trim());

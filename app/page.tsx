@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import confetti from 'canvas-confetti';
 import { supabase } from '../lib/supabase';
-import { detectWorkoutTypeFromWodText, parseTimeInput, formatSeconds, WorkoutType } from '../lib/wodType';
+import { detectWorkoutTypeFromWodText, detectTeamFromWodText, parseTimeInput, formatSeconds, WorkoutType } from '../lib/wodType';
 import {
   todayInTZ, formatDateDisplay, isSaturday, isSunday, isWeekend, shiftDate, isoWeekday,
 } from '../lib/timezone';
@@ -45,6 +45,13 @@ type Score = {
 function effectiveType(wod: Wod | null): WorkoutType {
   if (!wod) return 'UNKNOWN';
   return (wod.workout_type_override as WorkoutType | null) ?? detectWorkoutTypeFromWodText(wod.wod_text);
+}
+
+/** Merge DB is_team/team_size with auto-detection from WOD text. Text detection fills in when DB flag is not set. */
+function effectiveTeam(wod: Wod | null): { isTeam: boolean; teamSize: number } {
+  if (!wod) return { isTeam: false, teamSize: 2 };
+  if (wod.is_team) return { isTeam: true, teamSize: wod.team_size || 2 };
+  return detectTeamFromWodText(wod.wod_text);
 }
 
 function scoreDisplay(s: Score, type: WorkoutType): string {
@@ -413,6 +420,9 @@ export default function HomePage() {
     if (!meId) return;
     setSubmitting(true); setSubmitErr(null); setSubmitMsg(null);
 
+    // Use effective team detection (DB flag OR auto-detected from WOD text)
+    const { isTeam: isTeamWod } = effectiveTeam(wod);
+
     let timeSeconds: number | null = null;
     let rounds: number | null = null;
     let reps: number | null = null;
@@ -432,7 +442,7 @@ export default function HomePage() {
       rounds = 0; reps = cal;
     }
 
-    if (wod?.is_team) {
+    if (isTeamWod) {
       const totalPartners = teamMates.length + guestNames.filter((n) => n.trim()).length;
       if (totalPartners < 1) {
         setSubmitErr('Add at least one teammate or guest partner');
@@ -442,22 +452,22 @@ export default function HomePage() {
     }
 
     // Determine effective athlete for individual WODs
-    const isGuestSubmission = !wod?.is_team && forAthleteId === 'guest';
+    const isGuestSubmission = !isTeamWod && forAthleteId === 'guest';
     const guestName = isGuestSubmission ? (forGuestName.trim() || 'Visitor') : null;
     // For guest: use null athlete_id (no profile link); guest_athlete_name holds display name
-    const effectiveAthleteId = !wod?.is_team
+    const effectiveAthleteId = !isTeamWod
       ? (forAthleteId === 'me' ? meId : forAthleteId === 'guest' ? null : forAthleteId)
       : meId;
 
-    const teamIds = wod?.is_team ? Array.from(new Set([meId, ...teamMates])) : [effectiveAthleteId!];
-    const teamId = wod?.is_team ? crypto.randomUUID() : null;
+    const teamIds = isTeamWod ? Array.from(new Set([meId, ...teamMates])) : [effectiveAthleteId!];
+    const teamId = isTeamWod ? crypto.randomUUID() : null;
     const cleanGuests = guestNames.filter((n) => n.trim());
 
     let anyError = false;
-    for (const athleteId of (wod?.is_team ? teamIds : [effectiveAthleteId!])) {
+    for (const athleteId of (isTeamWod ? teamIds : [effectiveAthleteId!])) {
       const payload: any = {
         athlete_id: athleteId, entered_by: meId, submitted_by: meId,
-        wod_date: today, is_rx: isRx, is_team: wod?.is_team ?? false, team_id: teamId,
+        wod_date: today, is_rx: isRx, is_team: isTeamWod, team_id: teamId,
         time_seconds: timeSeconds, time_input: timeSeconds != null ? timeInput : null,
         amrap_rounds: rounds, amrap_reps: reps,
         amrap_input: rounds != null && type === 'AMRAP' ? `${rounds}+${reps}` : null,
@@ -682,7 +692,8 @@ export default function HomePage() {
   // ── Weekday view ─────────────────────────────────────────────────────────────
   const scoreable = type === 'TIME' || type === 'AMRAP' || type === 'CALORIES';
   const showSubmitSection = isToday && wod && (scoreable || type === 'NO_SCORE');
-  const displayedGroups = wod?.is_team ? groupTeams(scores) : scores.map((s) => [s]);
+  const { isTeam, teamSize: effectiveTeamSize } = effectiveTeam(wod);
+  const displayedGroups = isTeam ? groupTeams(scores) : scores.map((s) => [s]);
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-lg flex-col gap-5 bg-black px-4 py-10 pb-28 text-slate-100">
@@ -743,7 +754,7 @@ export default function HomePage() {
               </div>
 
               {/* Add score for others */}
-              {!wod.is_team && (
+              {!isTeam && (
                 <div className="mt-4 border-t border-white/5 pt-4">
                   {addingForOther ? (
                     <>
@@ -840,7 +851,7 @@ export default function HomePage() {
               </h2>
 
               {/* Submitting for — only shown for individual WODs, not edit mode */}
-              {!wod.is_team && !editing && (
+              {!isTeam && !editing && (
                 <div className="mb-3">
                   <label className="mb-1 block text-xs text-slate-500">Submitting for</label>
                   <select
@@ -902,7 +913,7 @@ export default function HomePage() {
                   placeholder="Calories"
                   className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none" />
               )}
-              {wod.is_team && (
+              {isTeam && (
                 <TeammatePicker members={members} meId={meId}
                   selected={teamMates}
                   onToggle={(id) => setTeamMates((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id])}
@@ -951,7 +962,7 @@ export default function HomePage() {
           <div className="rounded-2xl border border-white/10 bg-[#0a0f1e] px-6 py-8 text-center text-sm text-slate-500">
             {isToday ? 'Be the first to suffer.' : 'No scores posted for this day.'}
           </div>
-        ) : wod?.is_team ? (
+        ) : isTeam ? (
           /* Team leaderboard */
           <div className="flex flex-col gap-2">
             {displayedGroups.map((group, idx) => {
