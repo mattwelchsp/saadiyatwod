@@ -397,7 +397,10 @@ export default function HomePage() {
           supabase.from('profiles').select('id, display_name, avatar_url, is_admin').eq('id', user.id).single(),
           supabase.from('profiles').select('id, display_name, avatar_url').order('display_name'),
         ]);
-        if (profileRes.data) setMeProfile(profileRes.data as Profile);
+        if (profileRes.data) {
+          console.log('[admin debug] profile:', profileRes.data);
+          setMeProfile(profileRes.data as Profile);
+        }
         if (membersRes.data) setMembers(membersRes.data as Profile[]);
       }
     })();
