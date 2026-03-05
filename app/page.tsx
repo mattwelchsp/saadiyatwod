@@ -256,18 +256,20 @@ function TeamSlotPicker({
 
 type AdminValue =
   | 'TIME' | 'AMRAP' | 'CALORIES' | 'NO_SCORE'
-  | 'TEAM_TIME_2' | 'TEAM_AMRAP_2'
-  | 'TEAM_TIME_3' | 'TEAM_AMRAP_3';
+  | 'TEAM_TIME_2' | 'TEAM_AMRAP_2' | 'TEAM_CALORIES_2'
+  | 'TEAM_TIME_3' | 'TEAM_AMRAP_3' | 'TEAM_CALORIES_3';
 
 const ADMIN_OPTIONS: { value: AdminValue; label: string }[] = [
-  { value: 'TIME',         label: 'Individual — For Time' },
-  { value: 'AMRAP',        label: 'Individual — AMRAP (rounds + reps)' },
-  { value: 'CALORIES',     label: 'Individual — Calories' },
-  { value: 'NO_SCORE',     label: 'Individual — No Score (attendance)' },
-  { value: 'TEAM_TIME_2',  label: 'Partner (2) — For Time' },
-  { value: 'TEAM_AMRAP_2', label: 'Partner (2) — AMRAP' },
-  { value: 'TEAM_TIME_3',  label: 'Teams of 3 — For Time' },
-  { value: 'TEAM_AMRAP_3', label: 'Teams of 3 — AMRAP' },
+  { value: 'TIME',            label: 'Individual — For Time' },
+  { value: 'AMRAP',           label: 'Individual — AMRAP (rounds + reps)' },
+  { value: 'CALORIES',        label: 'Individual — Calories' },
+  { value: 'NO_SCORE',        label: 'Individual — No Score (attendance)' },
+  { value: 'TEAM_TIME_2',     label: 'Partner (2) — For Time' },
+  { value: 'TEAM_AMRAP_2',    label: 'Partner (2) — AMRAP' },
+  { value: 'TEAM_CALORIES_2', label: 'Partner (2) — Calories' },
+  { value: 'TEAM_TIME_3',     label: 'Teams of 3 — For Time' },
+  { value: 'TEAM_AMRAP_3',    label: 'Teams of 3 — AMRAP' },
+  { value: 'TEAM_CALORIES_3', label: 'Teams of 3 — Calories' },
 ];
 
 function wodToAdminValue(wod: Wod): AdminValue {
@@ -1250,10 +1252,10 @@ export default function HomePage() {
       />
 
       {/* Admin: scoring override panel */}
-      {isAdmin && isToday && wod && wodTab === 'today' && (
+      {isAdmin && wod && !(isToday && wodTab === 'tomorrow') && (
         <WodAdminPanel
           wod={wod}
-          label="Today's scoring"
+          label={isToday ? "Today's scoring" : `${formatDateDisplay(selectedDate)} scoring`}
           onSaved={(updated) => setWod(updated)}
         />
       )}
