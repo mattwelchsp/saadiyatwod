@@ -897,10 +897,18 @@ export default function HomePage() {
               </div>
 
               {/* Add score for others */}
-              {!isTeam && (
-                <div className="mt-4 border-t border-white/5 pt-4">
-                  {addingForOther ? (
-                    <>
+              <div className="mt-4 border-t border-white/5 pt-4">
+                {addingForOther ? (
+                  <>
+                    {isTeam ? (
+                      <TeamSlotPicker
+                        teamSize={effectiveTeamSize}
+                        members={members}
+                        meId={meId}
+                        slots={teamSlots}
+                        onSlotsChange={setTeamSlots}
+                      />
+                    ) : (
                       <div className="mb-3">
                         <label className="mb-1 block text-xs text-slate-500">Submitting for</label>
                         <select
@@ -923,69 +931,74 @@ export default function HomePage() {
                           />
                         )}
                       </div>
-                      <div className="mb-3 flex rounded-xl border border-white/10 p-0.5 text-sm">
-                        {['Rx', 'Scaled'].map((label) => (
-                          <button key={label} onClick={() => setIsRx(label === 'Rx')}
-                            className={`flex-1 rounded-lg py-1.5 font-medium transition-colors ${
-                              (label === 'Rx') === isRx ? 'bg-white text-black' : 'text-slate-400 hover:text-white'
-                            }`}>
-                            {label}
-                          </button>
-                        ))}
-                      </div>
-                      {type === 'TIME' && (
-                        <input type="text" value={timeInput} onChange={(e) => setTimeInput(e.target.value)}
-                          onKeyDown={(e) => e.key === 'Enter' && handleSubmit(false)}
-                          placeholder="mm:ss"
-                          className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none" />
-                      )}
-                      {type === 'AMRAP' && (
-                        <div className="flex gap-3">
-                          <div className="flex-1">
-                            <label className="mb-1 block text-xs text-slate-500">Rounds</label>
-                            <input type="number" min="0" value={amrapRounds} onChange={(e) => setAmrapRounds(e.target.value)} placeholder="0"
-                              className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none" />
-                          </div>
-                          <div className="flex-1">
-                            <label className="mb-1 block text-xs text-slate-500">Extra reps</label>
-                            <input type="number" min="0" value={amrapReps} onChange={(e) => setAmrapReps(e.target.value)} placeholder="0"
-                              className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none" />
-                          </div>
+                    )}
+                    <div className="mb-3 flex rounded-xl border border-white/10 p-0.5 text-sm mt-3">
+                      {['Rx', 'Scaled'].map((label) => (
+                        <button key={label} onClick={() => setIsRx(label === 'Rx')}
+                          className={`flex-1 rounded-lg py-1.5 font-medium transition-colors ${
+                            (label === 'Rx') === isRx ? 'bg-white text-black' : 'text-slate-400 hover:text-white'
+                          }`}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    {type === 'TIME' && (
+                      <input type="text" value={timeInput} onChange={(e) => setTimeInput(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleSubmit(false)}
+                        placeholder="mm:ss"
+                        className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none" />
+                    )}
+                    {type === 'AMRAP' && (
+                      <div className="flex gap-3">
+                        <div className="flex-1">
+                          <label className="mb-1 block text-xs text-slate-500">Rounds</label>
+                          <input type="number" min="0" value={amrapRounds} onChange={(e) => setAmrapRounds(e.target.value)} placeholder="0"
+                            className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none" />
                         </div>
-                      )}
-                      {type === 'CALORIES' && (
-                        <input type="number" min="0" value={calorieInput} onChange={(e) => setCalorieInput(e.target.value)}
-                          onKeyDown={(e) => e.key === 'Enter' && handleSubmit(false)}
-                          placeholder="Calories"
-                          className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none" />
-                      )}
-                      <div className="mt-3 flex gap-2">
-                        <button onClick={() => handleSubmit(false)} disabled={submitting}
-                          className="flex-1 rounded-xl bg-white py-2.5 text-sm font-semibold text-black hover:bg-slate-200 disabled:opacity-40">
-                          {submitting ? 'Saving…' : 'Submit Score'}
-                        </button>
-                        <button onClick={() => { setAddingForOther(false); setForAthleteId('me'); setForGuestName(''); setTimeInput(''); setAmrapRounds(''); setAmrapReps(''); setCalorieInput(''); }}
-                          className="rounded-xl border border-white/20 px-4 py-2.5 text-sm text-slate-400 hover:text-white">
-                          Cancel
-                        </button>
+                        <div className="flex-1">
+                          <label className="mb-1 block text-xs text-slate-500">Extra reps</label>
+                          <input type="number" min="0" value={amrapReps} onChange={(e) => setAmrapReps(e.target.value)} placeholder="0"
+                            className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none" />
+                        </div>
                       </div>
-                    </>
-                  ) : (
-                    <button
-                      onClick={() => {
-                        setAddingForOther(true);
-                        setSubmitMsg(null);
+                    )}
+                    {type === 'CALORIES' && (
+                      <input type="number" min="0" value={calorieInput} onChange={(e) => setCalorieInput(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleSubmit(false)}
+                        placeholder="Calories"
+                        className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none" />
+                    )}
+                    <div className="mt-3 flex gap-2">
+                      <button onClick={() => handleSubmit(false)} disabled={submitting}
+                        className="flex-1 rounded-xl bg-white py-2.5 text-sm font-semibold text-black hover:bg-slate-200 disabled:opacity-40">
+                        {submitting ? 'Saving…' : 'Submit Score'}
+                      </button>
+                      <button onClick={() => { setAddingForOther(false); setForAthleteId('me'); setForGuestName(''); setTimeInput(''); setAmrapRounds(''); setAmrapReps(''); setCalorieInput(''); setTeamSlots([]); }}
+                        className="rounded-xl border border-white/20 px-4 py-2.5 text-sm text-slate-400 hover:text-white">
+                        Cancel
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setAddingForOther(true);
+                      setSubmitMsg(null);
+                      if (isTeam) {
+                        // Initialize all slots empty so 'me' isn't auto-included in another team's entry
+                        setTeamSlots(Array.from({ length: effectiveTeamSize }, () => ({ value: '', guestName: '' })));
+                      } else {
                         const firstOther = members.find((m) => m.id !== meId);
                         setForAthleteId(firstOther ? firstOther.id : 'guest');
-                        setTimeInput(''); setAmrapRounds(''); setAmrapReps(''); setCalorieInput('');
-                      }}
-                      className="w-full rounded-xl border border-white/10 py-2 text-xs font-medium text-slate-400 hover:bg-white/5 hover:text-slate-200 transition-colors"
-                    >
-                      + Add score for someone else
-                    </button>
-                  )}
-                </div>
-              )}
+                      }
+                      setTimeInput(''); setAmrapRounds(''); setAmrapReps(''); setCalorieInput('');
+                    }}
+                    className="w-full rounded-xl border border-white/10 py-2 text-xs font-medium text-slate-400 hover:bg-white/5 hover:text-slate-200 transition-colors"
+                  >
+                    {isTeam ? '+ Add another team\'s score' : '+ Add score for someone else'}
+                  </button>
+                )}
+              </div>
             </>
           ) : (
             <>
