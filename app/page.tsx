@@ -387,6 +387,7 @@ export default function HomePage() {
   const [submitErr, setSubmitErr] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [addingForOther, setAddingForOther] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
   // One-time auth + member load
   useEffect(() => {
@@ -822,7 +823,6 @@ export default function HomePage() {
   const scoreable = type === 'TIME' || type === 'AMRAP' || type === 'CALORIES';
 
   // Admin delete
-  const [pendingDelete, setPendingDelete] = useState<string | null>(null); // score id or team_id
   const handleDeleteScore = async (scoreId: string, teamId: string | null) => {
     const key = teamId ?? scoreId;
     if (pendingDelete !== key) { setPendingDelete(key); return; } // first tap: arm
