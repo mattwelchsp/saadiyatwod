@@ -374,7 +374,7 @@ export default function HomePage() {
   const attendingRef = useRef(false);
 
   // Score submission
-  const [isRx, setIsRx] = useState(true);
+  const [isRx, setIsRx] = useState(false);
   const [timeInput, setTimeInput] = useState('');
   const [amrapRounds, setAmrapRounds] = useState('');
   const [amrapReps, setAmrapReps] = useState('');
