@@ -395,8 +395,8 @@ function computeStats(
 
 function PlacementChart({ placements, limit }: { placements: PlacementPoint[]; limit: number }) {
   const visible = placements.slice(-limit);
-  const W = 280, H = 80;
-  const PAD = { top: 8, bottom: 24, left: 24, right: 8 };
+  const W = 280, H = 100;
+  const PAD = { top: 18, bottom: 24, left: 24, right: 8 };
   const chartW = W - PAD.left - PAD.right;
   const chartH = H - PAD.top - PAD.bottom;
 
@@ -411,8 +411,8 @@ function PlacementChart({ placements, limit }: { placements: PlacementPoint[]; l
 
   const polyPoints = visible.map((p, i) => `${xFor(i)},${yFor(p.rank)}`).join(' ');
 
-  const labelIndices = new Set([0, n - 1]);
-  if (n > 4) labelIndices.add(Math.floor(n / 2));
+  const dateIndices = new Set([0, n - 1]);
+  if (n > 4) dateIndices.add(Math.floor(n / 2));
 
   return (
     <div className="overflow-x-auto">
@@ -429,11 +429,26 @@ function PlacementChart({ placements, limit }: { placements: PlacementPoint[]; l
         {visible.map((p, i) => (
           <circle key={p.date} cx={xFor(i)} cy={yFor(p.rank)} r={4} fill={dotColor(p.rank)} />
         ))}
+        {/* Rank label above each dot */}
+        {visible.map((p, i) => (
+          <text
+            key={`rank-${p.date}`}
+            x={xFor(i)}
+            y={yFor(p.rank) - 7}
+            textAnchor="middle"
+            fill={dotColor(p.rank)}
+            fontSize={8}
+            fontWeight="bold"
+          >
+            {p.rank}
+          </text>
+        ))}
+        {/* Date labels at first, middle, last */}
         {visible.map((p, i) => {
-          if (!labelIndices.has(i)) return null;
+          if (!dateIndices.has(i)) return null;
           const label = new Date(p.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
           return (
-            <text key={p.date} x={xFor(i)} y={H - 2} textAnchor="middle" fill="#475569" fontSize={8}>{label}</text>
+            <text key={`date-${p.date}`} x={xFor(i)} y={H - 2} textAnchor="middle" fill="#475569" fontSize={8}>{label}</text>
           );
         })}
       </svg>
