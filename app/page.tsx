@@ -12,7 +12,7 @@ import BottomNav from '../components/BottomNav';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-type Profile = { id: string; display_name: string | null; avatar_url: string | null };
+type Profile = { id: string; display_name: string | null; avatar_url: string | null; is_admin?: boolean };
 
 type Wod = {
   wod_date: string;
@@ -252,6 +252,91 @@ function TeamSlotPicker({
   );
 }
 
+// ── Admin WOD Panel ──────────────────────────────────────────────────────────
+
+type AdminValue =
+  | 'TIME' | 'AMRAP' | 'CALORIES' | 'NO_SCORE'
+  | 'TEAM_TIME_2' | 'TEAM_AMRAP_2'
+  | 'TEAM_TIME_3' | 'TEAM_AMRAP_3';
+
+const ADMIN_OPTIONS: { value: AdminValue; label: string }[] = [
+  { value: 'TIME',         label: 'Individual — For Time' },
+  { value: 'AMRAP',        label: 'Individual — AMRAP (rounds + reps)' },
+  { value: 'CALORIES',     label: 'Individual — Calories' },
+  { value: 'NO_SCORE',     label: 'Individual — No Score (attendance)' },
+  { value: 'TEAM_TIME_2',  label: 'Partner (2) — For Time' },
+  { value: 'TEAM_AMRAP_2', label: 'Partner (2) — AMRAP' },
+  { value: 'TEAM_TIME_3',  label: 'Teams of 3 — For Time' },
+  { value: 'TEAM_AMRAP_3', label: 'Teams of 3 — AMRAP' },
+];
+
+function wodToAdminValue(wod: Wod): AdminValue {
+  const { isTeam, teamSize } = effectiveTeam(wod);
+  const t = effectiveType(wod);
+  if (isTeam) {
+    const size = teamSize >= 3 ? 3 : 2;
+    return `TEAM_${t}_${size}` as AdminValue;
+  }
+  return t as AdminValue;
+}
+
+function WodAdminPanel({
+  wod, label, onSaved,
+}: {
+  wod: Wod; label: string;
+  onSaved: (updated: Wod) => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState(false);
+
+  const current = wodToAdminValue(wod);
+
+  const handleChange = async (value: AdminValue) => {
+    setSaving(true);
+    let is_team = false, team_size = 2, workout_type_override: string;
+    if (value.startsWith('TEAM_')) {
+      const parts = value.split('_');
+      is_team = true;
+      team_size = parseInt(parts[parts.length - 1]);
+      workout_type_override = parts[1]; // TIME or AMRAP
+    } else {
+      workout_type_override = value;
+    }
+    const { error } = await supabase
+      .from('wods')
+      .update({ workout_type_override, is_team, team_size })
+      .eq('wod_date', wod.wod_date);
+    if (!error) {
+      onSaved({ ...wod, workout_type_override, is_team, team_size });
+      setSavedMsg(true);
+      setTimeout(() => setSavedMsg(false), 2000);
+    }
+    setSaving(false);
+  };
+
+  return (
+    <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <span className="flex items-center gap-1.5 text-xs font-medium text-amber-400/80">
+          ⚙ {label}
+        </span>
+        {savedMsg && <span className="text-xs text-green-400">Saved ✓</span>}
+        {saving && <span className="text-xs text-slate-500">Saving…</span>}
+      </div>
+      <select
+        value={current}
+        onChange={(e) => handleChange(e.target.value as AdminValue)}
+        disabled={saving}
+        className="mt-2 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:outline-none appearance-none disabled:opacity-40"
+      >
+        {ADMIN_OPTIONS.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function HomePage() {
@@ -309,7 +394,7 @@ export default function HomePage() {
       if (user) {
         setMeId(user.id);
         const [profileRes, membersRes] = await Promise.all([
-          supabase.from('profiles').select('id, display_name, avatar_url').eq('id', user.id).single(),
+          supabase.from('profiles').select('id, display_name, avatar_url, is_admin').eq('id', user.id).single(),
           supabase.from('profiles').select('id, display_name, avatar_url').order('display_name'),
         ]);
         if (profileRes.data) setMeProfile(profileRes.data as Profile);
@@ -728,7 +813,22 @@ export default function HomePage() {
   }
 
   // ── Weekday view ─────────────────────────────────────────────────────────────
+  const isAdmin = meProfile?.is_admin === true;
   const scoreable = type === 'TIME' || type === 'AMRAP' || type === 'CALORIES';
+
+  // Admin delete
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null); // score id or team_id
+  const handleDeleteScore = async (scoreId: string, teamId: string | null) => {
+    const key = teamId ?? scoreId;
+    if (pendingDelete !== key) { setPendingDelete(key); return; } // first tap: arm
+    setPendingDelete(null);
+    if (teamId) {
+      await supabase.from('scores').delete().eq('team_id', teamId);
+    } else {
+      await supabase.from('scores').delete().eq('id', scoreId);
+    }
+    await loadDateData(selectedDate);
+  };
   const showSubmitSection = isToday && wod && (scoreable || type === 'NO_SCORE');
   const { isTeam, teamSize: effectiveTeamSize } = effectiveTeam(wod);
   const displayedGroups = isTeam ? groupTeams(scores) : scores.map((s) => [s]);
@@ -1045,7 +1145,17 @@ export default function HomePage() {
                         : <span className="mt-0.5 text-xs text-slate-600">Scaled</span>
                       }
                     </div>
-                    <span className="flex-shrink-0 text-sm font-bold text-white">{scoreDisplay(rep, type)}</span>
+                    <div className="flex flex-shrink-0 flex-col items-end gap-1">
+                      <span className="text-sm font-bold text-white">{scoreDisplay(rep, type)}</span>
+                      {isAdmin && (
+                        <button
+                          onClick={() => handleDeleteScore(rep.id, rep.team_id)}
+                          className={`text-xs px-2 py-0.5 rounded-lg transition-colors ${pendingDelete === (rep.team_id ?? rep.id) ? 'bg-red-500/20 text-red-400 font-semibold' : 'text-slate-700 hover:text-red-400'}`}
+                        >
+                          {pendingDelete === (rep.team_id ?? rep.id) ? 'confirm?' : '✕'}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               );
@@ -1104,7 +1214,17 @@ export default function HomePage() {
                             </div>
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-right font-bold text-white">{scoreDisplay(s, type)}</td>
+                        <td className="px-4 py-3 text-right">
+                          <span className="font-bold text-white">{scoreDisplay(s, type)}</span>
+                          {isAdmin && (
+                            <button
+                              onClick={() => handleDeleteScore(s.id, null)}
+                              className={`ml-2 text-xs px-2 py-0.5 rounded-lg transition-colors ${pendingDelete === s.id ? 'bg-red-500/20 text-red-400 font-semibold' : 'text-slate-700 hover:text-red-400'}`}
+                            >
+                              {pendingDelete === s.id ? 'confirm?' : '✕'}
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     );
                   });
@@ -1125,6 +1245,22 @@ export default function HomePage() {
         onTabChange={setWodTab}
         type={type}
       />
+
+      {/* Admin: scoring override panel */}
+      {isAdmin && isToday && wod && wodTab === 'today' && (
+        <WodAdminPanel
+          wod={wod}
+          label="Today's scoring"
+          onSaved={(updated) => setWod(updated)}
+        />
+      )}
+      {isAdmin && isToday && tomorrowWod && wodTab === 'tomorrow' && (
+        <WodAdminPanel
+          wod={tomorrowWod}
+          label="Tomorrow's scoring"
+          onSaved={(updated) => setTomorrowWod(updated)}
+        />
+      )}
 
       <BottomNav />
     </main>
